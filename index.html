@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gestão de Obras</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+/* ======== Cloud: sincronização com Supabase ======== */
+window.Cloud=(function(){
+ const C={sb:null,user:null,ready:false,pending:{},timer:0,status:'',listeners:new Set(),last:{}};
+ const conf=()=>{const h=window.HC_CONFIG||{};let u=h.SUPABASE_URL,k=h.SUPABASE_ANON_KEY;if(!u||!k){try{const s=JSON.parse(localStorage.getItem('hc-sb-conf')||'null');if(s){u=s.url;k=s.key}}catch(e){}}return u&&k?{url:u.trim(),key:k.trim()}:null};
+ C.conf=conf;
+ C.emit=s=>{C.status=s;C.listeners.forEach(f=>{try{f(s)}catch(e){}})};
+ C.init=()=>{const c=conf();if(!c||!window.supabase)return false;try{C.sb=window.supabase.createClient(c.url,c.key,{auth:{persistSession:true,autoRefreshToken:true}});return true}catch(e){C.sb=null;return false}};
+ C.KEYS=['obras-hc1','mats-hc1','mos-hc1','tars-hc1','orcs-hc1','base-hc1','cfg-obras-hc1'];
+ C.pull=async()=>{const {data,error}=await C.sb.from('app_data').select('key,value,updated_at');if(error)throw error;
+  const map={};(data||[]).forEach(r=>{map[r.key]=r});
+  // primeira vez nesta conta: envia o que houver neste aparelho
+  if(!data||!data.length){const rows=C.KEYS.map(k=>{try{const v=JSON.parse(localStorage.getItem(k));return v==null?null:{key:k,value:v}}catch(e){return null}}).filter(Boolean);if(rows.length){const {error:e2}=await C.sb.from('app_data').upsert(rows.map(r=>({...r,user_id:C.user.id,updated_at:new Date().toISOString()})));if(e2)throw e2}return}
+  Object.keys(map).forEach(k=>{const j=JSON.stringify(map[k].value);C.lastJ[k]=j;try{localStorage.setItem(k,j)}catch(e){};C.last[k]=map[k].updated_at})};
+ C.flush=async()=>{clearTimeout(C.timer);const ks=Object.keys(C.pending);if(!ks.length||!C.sb||!C.user)return;
+  const rows=ks.map(k=>({user_id:C.user.id,key:k,value:C.pending[k],updated_at:new Date().toISOString()}));C.pending={};C.emit('A guardar…');
+  const {error}=await C.sb.from('app_data').upsert(rows);
+  if(error){rows.forEach(r=>{if(!(r.key in C.pending))C.pending[r.key]=r.value});C.emit('Erro a guardar — nova tentativa…');C.timer=setTimeout(C.flush,5000)}
+  else{rows.forEach(r=>{C.last[r.key]=r.updated_at});C.emit('Guardado na nuvem ✓')}};
+ C.lastJ={};C.save=(k,v)=>{if(!C.ready)return;const j=JSON.stringify(v);if(C.lastJ[k]===j)return;C.lastJ[k]=j;C.pending[k]=v;clearTimeout(C.timer);C.timer=setTimeout(C.flush,900)};
+ C.checkNew=async()=>{if(!C.ready||Object.keys(C.pending).length)return false;try{const {data}=await C.sb.from('app_data').select('key,updated_at');return (data||[]).some(r=>C.last[r.key]&&Date.parse(r.updated_at)>Date.parse(C.last[r.key])+1)}catch(e){return false}};
+ // anexos no Storage
+ C.upload=async file=>{const id=Date.now()+'-'+Math.random().toString(36).slice(2,7);const safe=(file.name||'ficheiro').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9._-]+/g,'-');const path=C.user.id+'/'+id+'-'+safe;
+  const {error}=await C.sb.storage.from('anexos').upload(path,file,{contentType:file.type||undefined,upsert:false});if(error)throw error;return {kind:'sb',id:path,path,name:file.name,type:file.type,size:file.size}};
+ C.url=async a=>{const {data,error}=await C.sb.storage.from('anexos').createSignedUrl(a.path,3600);if(error)throw error;return data.signedUrl};
+ C.remove=async a=>{try{await C.sb.storage.from('anexos').remove([a.path])}catch(e){}};
+ window.addEventListener('beforeunload',()=>{if(Object.keys(C.pending).length)C.flush()});
+ document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')C.flush()});
+ return C})();
+</script>
+<style>
+:root{--blue:#1d4ed8;--gold:#60a5fa;--r:14px;--pad:18px;--bg:#f5f5f3;--card:#fff;--fg:#0a0a0a;--mut:#6b7280;--bd:#e6e6e1;--inp:#f5f5f3;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#050505;--card:#111214;--fg:#f5f5f4;--mut:#9ca3af;--bd:#26272b;--inp:#1a1b1f}}
+:root[data-theme="dark"]{--bg:#050505;--card:#111214;--fg:#f5f5f4;--mut:#9ca3af;--bd:#26272b;--inp:#1a1b1f}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{background:var(--bg);color:var(--fg);font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;margin:0}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:var(--r);padding:var(--pad);position:relative;overflow:hidden}
+.st::before{content:"";position:absolute;left:0;top:0;bottom:0;width:6px;background:repeating-linear-gradient(135deg,var(--gold) 0 4px,transparent 4px 8px)}
+.st{padding-left:calc(var(--pad) + 8px)}
+.stripes{background:repeating-linear-gradient(135deg,var(--gold) 0 5px,transparent 5px 10px)}
+.nostripes .st::before{display:none}.nostripes .st{padding-left:var(--pad)}
+.nostripes .stripes{background:var(--gold)}
+.mut{color:var(--mut)}.gold{color:var(--gold)}
+.inp{background:var(--inp);border:1px solid var(--bd);border-radius:calc(var(--r)*.6);padding:7px 9px;color:var(--fg);width:100%;font-size:14px}
+.inp:focus{outline:2px solid var(--blue);outline-offset:-1px}
+.th{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);text-align:left;padding:8px;white-space:nowrap;font-weight:600}
+.td{padding:calc(var(--pad)*.35) 8px;border-top:1px solid var(--bd);vertical-align:middle}
+.btn{background:var(--blue);color:#fff;border-radius:calc(var(--r)*.7);padding:9px 15px;font-weight:600;font-size:14px}
+.btn2{background:var(--card);border:1px solid var(--bd);color:var(--fg);border-radius:calc(var(--r)*.7);padding:9px 15px;font-weight:600;font-size:14px}
+.blk{background:#0a0a0a;color:#fff}
+input[type=color]{width:44px;height:36px;border:none;background:none;padding:0}
+@keyframes up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.card{animation:up .4s ease both;transition:box-shadow .25s,transform .25s}
+.card:hover{box-shadow:0 14px 34px -16px rgba(0,0,0,.35)}
+.hero{background:linear-gradient(135deg,var(--blue),#0a1a5c)!important;box-shadow:0 12px 30px -14px var(--blue)}
+.btn{transition:filter .2s,transform .1s}.btn:hover{filter:brightness(1.12)}.btn:active{transform:scale(.97)}
+button{cursor:pointer}
+.tip{position:fixed;z-index:9999;background:var(--fg);color:var(--bg);font-size:12px;font-weight:600;padding:5px 9px;border-radius:8px;pointer-events:none;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.25);animation:tipin .12s ease-out}
+@keyframes tipin{from{opacity:0}to{opacity:1}}
+.btn2.sel{background:color-mix(in srgb,var(--blue) 10%,var(--card));border-color:color-mix(in srgb,var(--blue) 45%,var(--bd))}
+.btn.sel{filter:brightness(1.1)}
+.tapped{animation:tapfx .5s ease-out}
+.btn.tapped{animation-name:tapdark}
+@keyframes tapfx{0%{box-shadow:inset 0 0 0 999px color-mix(in srgb,var(--blue) 18%,transparent)}100%{box-shadow:inset 0 0 0 999px transparent}}
+@keyframes tapdark{0%{box-shadow:inset 0 0 0 999px rgba(0,0,0,.22)}100%{box-shadow:inset 0 0 0 999px transparent}}
+
+.modal-body{background:var(--card);border:1px solid var(--bd);border-radius:var(--r);padding:var(--pad);overflow-y:auto}
+a.btn,a.btn2{text-decoration:none}
+.blk{background:var(--card);color:var(--fg)}
+aside.blk{border-right:1px solid var(--bd)}header.blk{border-bottom:1px solid var(--bd)}nav.blk{border-top:1px solid var(--bd)}
+.stripes{display:none!important}.st::before{display:none!important}.st{padding-left:var(--pad)!important}
+.gold{color:var(--mut)!important}
+.card{animation:none!important}.card:hover{box-shadow:none}
+
+.hero{background:var(--blue)!important;box-shadow:none}
+:root{--neg:var(--fg)}
+html,body{max-width:100vw;overflow-x:clip}
+body{overflow-wrap:break-word}
+.card{overflow:visible!important}
+.grid>*,.flex>*{min-width:0}
+input[type=checkbox],input[type=range]{accent-color:var(--blue)}
+@media (max-width:767px){
+ table{min-width:0!important}
+ table thead{display:none}
+ table,tbody,tr{display:block;width:100%}
+ tr{border:1px solid var(--bd);border-radius:12px;padding:8px 10px;margin-bottom:10px;background:var(--card)}
+ td{display:flex!important;justify-content:space-between;align-items:center;gap:12px;border:0!important;padding:5px 0!important;width:100%!important;min-width:0!important;max-width:none!important;text-align:right}
+ td::before{content:attr(data-l);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);flex:0 0 36%;text-align:left}
+ td[data-l='']::before{display:none}
+ td[data-l='']{justify-content:flex-end}
+ td>.inp,td>select{flex:1;min-width:0;text-align:right}
+ .overflow-x-auto{overflow-x:visible}
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const {useState,useEffect,useRef}=React;
+const html=htm.bind(React.createElement);
+const eurS=v=>new Intl.NumberFormat('pt-PT',{style:'currency',currency:'EUR'}).format(v||0);
+const eur=v=>{const s=eurS(v),i=s.lastIndexOf(','),m=i<0?null:s.slice(i+1).match(/^(\d+)(.*)$/);if(!m)return s;return html`<span style=${{whiteSpace:'nowrap'}}>${s.slice(0,i)}<span style=${{fontSize:'.68em',opacity:.7}}>,${m[1]}</span>${m[2]}</span>`};
+const CATS=['Alvenaria','Elétrico','Canalização','Acabamentos','Outros'];
+const num=v=>parseFloat(v)||0;
+const OBRAS0=[
+ {id:1,cliente:'Família Silva',morada:'Rua das Flores 24, Porto',orc:85000,recebido:45000,estado:'Em curso'},
+ {id:2,cliente:'Marta Ferreira',morada:'Av. da Liberdade 112, Lisboa',orc:52000,recebido:30000,estado:'Em curso'},
+ {id:3,cliente:'João & Ana Costa',morada:'Travessa do Sol 7, Braga',orc:120000,recebido:60000,estado:'Em curso'}];
+const MAT0=[
+ {id:1,artigo:'Cimento 25kg',qtd:120,preco:5.2,iva:23,obra:1,cat:'Alvenaria'},
+ {id:2,artigo:'Tijolo 11cm (palete)',qtd:6,preco:310,iva:23,obra:1,cat:'Alvenaria'},
+ {id:3,artigo:'Cabo elétrico 2.5mm (rolo)',qtd:8,preco:64,iva:23,obra:2,cat:'Elétrico'},
+ {id:4,artigo:'Tubo multicamada 20mm',qtd:150,preco:2.8,iva:23,obra:2,cat:'Canalização'},
+ {id:5,artigo:'Azulejo 60x60 (m²)',qtd:95,preco:22,iva:23,obra:3,cat:'Acabamentos'},
+ {id:6,artigo:'Tinta plástica 15L',qtd:14,preco:58,iva:23,obra:3,cat:'Acabamentos'},
+ {id:7,artigo:'Cola cimento cinza',qtd:40,preco:9.5,iva:23,obra:3,cat:'Alvenaria'}];
+const MO0=[
+ {id:1,funcao:'Eletricista',nome:'Carlos M.',dias:12,dia:110,obra:1,pago:900},
+ {id:2,funcao:'Canalizador',nome:'Rui P.',dias:8,dia:100,obra:2,pago:800},
+ {id:3,funcao:'Pedreiro',nome:'Equipa Lopes',dias:40,dia:130,obra:3,pago:3500},
+ {id:4,funcao:'Pintor',nome:'António S.',dias:10,dia:90,obra:3,pago:300},
+ {id:5,funcao:'Pedreiro',nome:'Equipa Lopes',dias:25,dia:130,obra:1,pago:3250}];
+function usePersist(k,d){const [v,s]=useState(()=>{try{const x=JSON.parse(localStorage.getItem(k));return x||d}catch(e){return d}});useEffect(()=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){};window.Cloud&&window.Cloud.save(k,v)},[v]);return [v,s]}
+const DT={1:['2026-08-15','2027-01-31'],2:['2026-10-01','2027-01-15'],3:['2026-07-01','2027-06-30']};OBRAS0.forEach(o=>{o.inicio=DT[o.id][0];o.fim=DT[o.id][1];o.notas=''});
+const TAR0=[[1,'Demolição interior',1],[1,'Reboco das paredes',1],[1,'Instalação elétrica',0],[1,'Pavimento',0],[2,'Picagem e canalização',1],[2,'Instalação elétrica',0],[2,'Azulejos da casa de banho',0],[3,'Fundações',1],[3,'Estrutura e alvenaria',1],[3,'Telhado',1],[3,'Isolamentos',0],[3,'Acabamentos',0]].map((a,i)=>({id:i+1,obra:a[0],txt:a[1],ok:!!a[2]}));
+const prog=(t,id)=>{const x=t.filter(a=>a.obra===id);return x.length?x.filter(a=>a.ok).length/x.length*100:0};
+
+const RED='#dc2626';
+const metaOf=cfg=>{const m=parseFloat(cfg&&cfg.meta);return isNaN(m)?35:Math.min(Math.max(m,0),99)};
+const lucroP=(orc,g)=>orc>0?(orc-g)/orc*100:0;
+function LucroBar({orc,g,cfg,txt=true}){
+ const meta=metaOf(cfg),lp=lucroP(orc,g),ok=lp>=meta,col=ok?cfg.azul:RED,w=Math.max(0,Math.min(100,lp));
+  return html`<div><div style=${{position:'relative',background:'var(--bd)',borderRadius:99,height:12,overflow:'hidden'}}>
+   <div style=${{position:'absolute',right:0,top:0,bottom:0,width:w+'%',background:col,borderRadius:99,transition:'width .4s'}}></div>
+   <div title=${'Meta mínima de lucro: '+meta+'%'} style=${{position:'absolute',right:'calc('+meta+'% - 1.5px)',top:0,bottom:0,width:3,background:'#38bdf8',boxShadow:'0 0 0 1px rgba(255,255,255,.7)'}}></div></div>
+  ${txt&&html`<div className="flex justify-between gap-2 text-xs mt-1 flex-wrap"><b style=${{color:col}}>Lucro ${lp.toFixed(0)}%${ok?'':' · abaixo da meta'}</b><span className="mut">Meta mínima ${meta}%${ok?'':' · faltam '+(meta-lp).toFixed(0)+' pontos'}</span></div>`}</div>`}
+
+const dayN=d=>{const x=new Date(d+'T00:00:00'),t=new Date();t.setHours(0,0,0,0);return Math.round((t-x)/864e5)};
+const overdue=o=>o&&o.fim&&o.estado!=='Concluída'?Math.max(0,dayN(o.fim)):0;
+const durTxt=n=>{if(n<=0)return '0 dias';const u=(k,a,b)=>k+' '+(k===1?a:b);if(n<31)return u(n,'dia','dias');const m=Math.floor(n/30.4),r=n-Math.round(m*30.4);const mm=u(m,'mês','meses');return r>0?mm+' e '+u(r,'dia','dias'):mm};
+function PrazoBar({o,cfg}){
+ if(!o||!o.inicio||!o.fim)return null;
+ const a=new Date(o.inicio+'T00:00:00').getTime(),b=new Date(o.fim+'T00:00:00').getTime();if(!(b>a))return null;
+ const od=overdue(o),done=o.estado==='Concluída',pct=done?100:Math.max(0,Math.min(100,(Date.now()-a)/(b-a)*100)),rest=-dayN(o.fim);
+ const col=od>0?RED:cfg.azul;
+ return html`<div className="mt-2"><div style=${{background:'var(--bd)',borderRadius:99,height:8,overflow:'hidden'}}><div style=${{width:pct+'%',background:col,height:'100%',borderRadius:99,transition:'width .4s'}}></div></div>
+  <div className="flex justify-between gap-2 text-xs mt-1 flex-wrap"><span className="mut">Prazo · fim previsto ${fdate(o.fim)}</span>${od>0?html`<b style=${{color:RED}}>Ultrapassado há ${durTxt(od)}</b>`:html`<span className="mut">${done?'Concluída':rest===0?'Termina hoje':'Faltam '+durTxt(rest)}</span>`}</div></div>`}
+const left=d=>{const n=Math.ceil((new Date(d)-new Date())/864e5);return n<0?'atrasada '+(-n)+' d':n+' dias'};
+const copy=t=>{try{navigator.clipboard.writeText(t);return true}catch(e){return false}};
+const FN={'Alvenaria':'Cimentos do Norte','Elétrico':'Eletro Sul','Canalização':'Hidro Norte','Acabamentos':'Cerâmicas Atlântico','Outros':'Leroy Merlin'};MAT0.forEach((m,i)=>{m.data='2026-'+('0'+(8+i%4)).slice(-2)+'-'+('0'+(3+i*3)).slice(-2);m.forn=FN[m.cat];m.nf='FT 2026/'+(101+i);m.pago=i%3!==0});
+const matTot=m=>m.qtd*m.preco*(1+m.iva/100);
+const moTot=m=>m.dias*m.dia;
+
+const DEF={empresa:'HC Design & Construções',azul:'#1d4ed8',ouro:'#60a5fa',tema:'auto',raio:14,dens:'conf',menu:'lateral',riscas:true,
+ ordem:['cards','alertas','barras','donut','margem'],vis:{cards:true,alertas:true,barras:true,donut:true,margem:true},meta:35,tabs:{dash:'Dashboard',obras:'Obras',orc:'Orçamentos',fat:'Faturas & Materiais',mo:'Mão-de-obra',tar:'Tarefas',base:'Base de dados'}};
+const BLK={cards:'Cartões de resumo',alertas:'Alertas inteligentes',margem:'Margem por obra',barras:'Gráfico orçamento vs. gasto',donut:'Gráfico por categoria'};
+const loadCfg=()=>{try{const s=JSON.parse(localStorage.getItem('cfg-obras-hc1'));if(!s){const o=JSON.parse(localStorage.getItem('cfg-obras-v4'));if(o)return {...DEF,...o,empresa:DEF.empresa,vis:{...DEF.vis,...o.vis},tabs:{...DEF.tabs,...o.tabs}}};return s?{...DEF,...s,vis:{...DEF.vis,...s.vis},tabs:{...DEF.tabs,...s.tabs}}:DEF}catch(e){return DEF}};
+
+const IC={dash:'M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z',obras:'M4 21V5l8-3 8 3v16M9 21v-5h6v5M9 9h.01M15 9h.01M9 13h.01M15 13h.01',fat:'M6 2h12v20l-3-2-3 2-3-2-3 2zM9 7h6M9 11h6',mo:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8',set:'M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M14 4v4M8 10v4M16 16v4',tar:'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11',orc:'M6 2h9l5 5v15H6zM14 2v6h6M9 13h6M9 17h6',base:'M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6',more:'M5 12h.01M12 12h.01M19 12h.01',eye:'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',trash:'M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6',plus:'M12 5v14M5 12h14',copy:'M9 9h11v11H9zM5 15H4V4h11v1',dl:'M12 3v12M7 10l5 5 5-5M5 21h14',upl:'M12 15V3M7 8l5-5 5 5M5 21h14',open:'M5 12h14M13 6l6 6-6 6',spark:'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z',branch:'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9',check:'M20 6L9 17l-5-5',x:'M18 6L6 18M6 6l12 12',up:'M12 19V5M5 12l7-7 7 7',down:'M12 5v14M19 12l-7 7-7-7',txt:'M4 7V4h16v3M9 20h6M12 4v16',clip:'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48'};
+function IB({ic,t,on,pri,txt,st,s=17}){
+ const [pos,setPos]=useState(null);const tm=useRef(0);
+ useEffect(()=>()=>clearTimeout(tm.current),[]);
+ const show=(e,ms)=>{const r=e.currentTarget.getBoundingClientRect();clearTimeout(tm.current);setPos({x:r.left+r.width/2,y:r.top,b:r.bottom});if(ms)tm.current=setTimeout(()=>setPos(null),ms)};
+ const hide=()=>{clearTimeout(tm.current);setPos(null)};
+ const tip=!txt&&pos&&t?ReactDOM.createPortal(html`<div className="tip" style=${{left:Math.min(Math.max(pos.x,70),window.innerWidth-70),top:pos.y>44?pos.y-8:pos.b+8,transform:pos.y>44?'translate(-50%,-100%)':'translate(-50%,0)'}}>${t}</div>`,document.body):null;
+ return html`<button className=${(pri?'btn':'btn2')+(tip?' sel':'')} aria-label=${t} onClick=${on}
+  onPointerDown=${e=>{if(!txt)show(e,1800)}} onMouseEnter=${e=>{if(!txt&&e.nativeEvent&&e.nativeEvent.pointerType!=='touch')show(e,0)}} onMouseLeave=${hide} onBlur=${hide}
+  style=${{display:'inline-flex',alignItems:'center',justifyContent:'center',gap:6,...(txt?{padding:'8px 13px'}:{padding:'8px 11px'}),...st}}><${Ic} d=${IC[ic]} s=${s}/>${txt&&html`<span>${txt}</span>`}${tip}</button>`}
+try{document.addEventListener('pointerdown',e=>{const t=e.target&&e.target.closest?e.target.closest('button,a,select,label,[role=button]'):null;if(!t||t.disabled)return;t.classList.remove('tapped');void t.offsetWidth;t.classList.add('tapped');clearTimeout(t._tp);t._tp=setTimeout(()=>t.classList.remove('tapped'),600)},true)}catch(err){}
+function ConfDel({on,t='Apagar'}){
+ const [c,setC]=useState(false);const tm=useRef(0);useEffect(()=>()=>clearTimeout(tm.current),[]);
+ if(!c)return html`<${IB} ic="trash" t=${t} on=${e=>{if(e&&e.stopPropagation)e.stopPropagation();setC(true);clearTimeout(tm.current);tm.current=setTimeout(()=>setC(false),4000)}}/>`;
+ return html`<span className="inline-flex items-center gap-1"><button className="btn" aria-label=${'Confirmar: '+t} title=${'Confirmar: '+t} onClick=${()=>{clearTimeout(tm.current);setC(false);on()}} style=${{background:RED,display:'inline-flex',alignItems:'center',gap:6,padding:'8px 12px'}}><${Ic} d=${IC.trash} s=${17}/><span>Apagar?</span></button><${IB} ic="x" t="Cancelar" on=${()=>{clearTimeout(tm.current);setC(false)}}/></span>`}
+function Ic({d,s=20}){return html`<svg width=${s} height=${s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d=${d}/></svg>`}
+
+function Card({children,cls='',st}){return html`<div className=${'card '+(st?'st ':'')+cls}>${children}</div>`}
+function Stat({label,value,sub,hero,go}){return html`<div onClick=${go} className=${'card st '+(hero?'hero':'')+(go?' cursor-pointer':'')+' text-center md:text-left'} style=${hero?{background:'var(--blue)',color:'#fff',borderColor:'var(--blue)'}:{}}><div className="text-[11px] uppercase tracking-widest font-semibold" style=${{color:hero?'#fff':'var(--gold)',opacity:hero?.85:1}}>${label}</div><div className="text-xl md:text-2xl font-extrabold tracking-tight mt-1 break-words">${value}</div><div className="text-xs mt-1" style=${{opacity:.65}}>${sub}${go?' · ver detalhes →':''}</div></div>`}
+function Bar({pct,blue,gold}){const c=pct>100?'var(--neg)':pct>85?gold:blue;return html`<div style=${{background:'var(--bd)',borderRadius:99,height:10,overflow:'hidden'}}><div style=${{width:Math.min(pct,100)+'%',background:c,height:'100%',borderRadius:99,transition:'width .4s'}}></div></div>`}
+
+function BarsChart({data,cfg,la,lb}){
+ const [tip,setTip]=useState(null);
+ const W=600,H=260,pl=44,pb=32,pt=10;
+ const max=Math.max(...data.flatMap(d=>[d.orc,d.gasto]),1)*1.1;
+ const y=v=>H-pb-(v/max)*(H-pb-pt);
+ const gw=(W-pl)/data.length,bw=gw*0.26;
+ return html`<div>
+  <svg viewBox=${'0 0 '+W+' '+H} className="w-full" style=${{color:'var(--mut)'}}>
+   ${[0,.25,.5,.75,1].map(t=>t*max).map((t,i)=>html`<g key=${i}><line x1=${pl} x2=${W} y1=${y(t)} y2=${y(t)} stroke="currentColor" opacity=".2"/><text x=${pl-6} y=${y(t)+4} fontSize="11" textAnchor="end" fill="currentColor">${Math.round(t/1000)}k</text></g>`)}
+   ${data.map((d,i)=>{const x0=pl+i*gw+gw/2;return html`<g key=${i} onMouseEnter=${()=>setTip(d)} onClick=${()=>setTip(d)} style=${{cursor:'pointer'}}>
+     <rect x=${x0-bw-3} y=${y(d.orc)} width=${bw} height=${H-pb-y(d.orc)} rx="5" fill=${cfg.azul}/>
+     <rect x=${x0+3} y=${y(d.gasto)} width=${bw} height=${H-pb-y(d.gasto)} rx="5" fill=${d.gasto>d.orc?'var(--neg)':cfg.ouro}/>
+     <text x=${x0} y=${H-12} fontSize="12" textAnchor="middle" fill="currentColor">${d.nome}</text></g>`})}
+  </svg>
+  <div className="flex gap-4 text-xs mut justify-center"><span><b style=${{color:cfg.azul}}>■</b> ${la||'Orçamento'}</span><span><b style=${{color:cfg.ouro}}>■</b> ${lb||'Gasto real'}</span></div>
+  <div className="text-center text-sm mt-2 h-5">${tip?html`<b>${tip.nome}</b>: ${la||'orçado'} ${eur(tip.orc)} · ${lb||'gasto'} ${eur(tip.gasto)}`:html`<span className="mut">Toca numa barra para ver valores</span>`}</div>
+ </div>`}
+
+function Donut({data,cfg}){
+ const [act,setAct]=useState(null);
+ const pal=[cfg.azul,'#60a5fa','#1e3a8a','#93c5fd','#475569','#94a3b8'];
+ const total=data.reduce((s,d)=>s+d.v,0)||1,R=70,C=2*Math.PI*R;let off=0;
+ return html`<div className="flex flex-col items-center gap-3">
+  <div className="relative w-48 h-48">
+   <svg viewBox="0 0 200 200" className="w-full h-full" style=${{transform:'rotate(-90deg)'}}>
+    ${data.map((d,i)=>{const len=d.v/total*C;const el=html`<circle key=${i} cx="100" cy="100" r=${R} fill="none" stroke=${pal[i%6]} strokeWidth=${act===i?30:22} strokeDasharray=${len+' '+(C-len)} strokeDashoffset=${-off} onMouseEnter=${()=>setAct(i)} onMouseLeave=${()=>setAct(null)} onClick=${()=>setAct(i)} style=${{cursor:'pointer',transition:'stroke-width .2s'}}/>`;off+=len;return el})}
+   </svg>
+   <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"><div className="text-xs mut">${act!==null?data[act].n:'Total'}</div><div className="font-extrabold">${eur(act!==null?data[act].v:total)}</div></div>
+  </div>
+  <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs">${data.map((d,i)=>html`<span key=${i} style=${{opacity:act===null||act===i?1:.4}}><b style=${{color:pal[i%6]}}>■</b> ${d.n} (${Math.round(d.v/total*100)}%)</span>`)}</div>
+ </div>`}
+
+function Dashboard({obras,mats,mos,gasto,cfg,tars,open}){const [sel,setSel0]=useState(null);const setSel=k=>{setSel0(k);try{window.scrollTo(0,0)}catch(e){}};
+ const desp=obras.reduce((s,o)=>s+gasto(o.id),0)+mats.filter(m=>!m.obra).reduce((s,m)=>s+matTot(m),0)+mos.filter(m=>!m.obra).reduce((s,m)=>s+moTot(m),0);
+ const rec=obras.reduce((s,o)=>s+o.recebido,0);
+ const data=obras.map(o=>({nome:o.cliente.split(' ')[0],orc:o.orc,gasto:gasto(o.id)}));
+ const cat=CATS.map(c=>({n:c,v:mats.filter(m=>m.cat===c).reduce((s,m)=>s+matTot(m),0)}));
+ cat.push({n:'Mão-de-obra',v:mos.reduce((s,m)=>s+moTot(m),0)});
+ const vis=cfg.ordem.filter(k=>cfg.vis[k]);
+ const half=vis.includes('barras')&&vis.includes('donut');
+ const al=[];obras.forEach(o=>{const g=gasto(o.id);if(g>o.orc)al.push(['var(--neg)',o.cliente+': orçamento ultrapassado em '+eurS(g-o.orc)]);else if(g/o.orc>.85)al.push([cfg.ouro,o.cliente+': já gastou '+Math.round(g/o.orc*100)+'% do orçamento']);if(tars.some(a=>a.obra===o.id)&&g/o.orc*100>prog(tars,o.id)+20)al.push([cfg.ouro,o.cliente+': gasto à frente da execução']);if(o.fim&&o.estado!=='Concluída'&&new Date(o.fim)<new Date())al.push(['var(--neg)',o.cliente+': prazo ultrapassado há '+durTxt(overdue(o))])});
+ const fm=mos.reduce((s,m)=>s+moTot(m)-m.pago,0);if(fm>0)al.push([cfg.azul,'Em falta a subempreiteiros: '+eurS(fm)]);
+ const sem=mats.filter(m=>!m.obra).length;if(sem)al.push([cfg.azul,sem+' linha(s) de material sem obra atribuída']);
+ const cl=half?'md:col-span-1':'md:col-span-2';
+ const B={
+  cards:html`<div key="c" className="md:col-span-2 grid grid-cols-2 md:grid-cols-3 gap-3">
+   <${Stat} hero=${true} go=${()=>setSel('lucro')} label="Lucro total" value=${eur(rec-desp)} sub=${'Recebido '+eurS(rec)}/>
+   <${Stat} go=${()=>setSel('desp')} label="Despesas totais" value=${eur(desp)} sub="Materiais + mão-de-obra"/>
+   <${Stat} go=${()=>setSel('ativas')} label="Obras ativas" value=${obras.filter(o=>o.estado==='Em curso').length} sub=${'de '+obras.length+' obras'}/>
+   <${Stat} go=${()=>setSel('orc')} label="Orçamento total" value=${eur(obras.reduce((s,o)=>s+o.orc,0))} sub="Todas as obras"/><${Stat} go=${()=>setSel('receber')} label="A receber" value=${eur(obras.reduce((s,o)=>s+o.orc,0)-rec)} sub="Orçamento − recebido"/><${Stat} go=${()=>setSel('pagar')} label="A pagar (subempr.)" value=${eur(fm)} sub="Mão-de-obra em falta"/></div>`,
+  alertas:html`<${Card} key='a' st=${true} cls='md:col-span-2'><div className='flex justify-between items-center mb-2'><h3 className='font-bold'>Alertas</h3><${Ver} go=${()=>setSel('alertas')}/></div>${al.length?al.map((a,i)=>html`<div key=${i} className='flex items-center gap-2 text-sm py-1'><b style=${{color:a[0]}}>●</b>${a[1]}</div>`):html`<div className='text-sm mut'>Tudo em ordem ✓</div>`}<//>`,
+  margem:html`<${Card} key='m' st=${true} cls='md:col-span-2'><div className='flex justify-between items-center mb-3'><h3 className='font-bold'>Margem prevista por obra</h3><${Ver} go=${()=>setSel('margem')}/></div>${obras.map(o=>{const g=gasto(o.id),mg=(o.orc-g)/o.orc*100;return html`<div key=${o.id} className='mb-3'><div className='flex justify-between text-sm mb-1'><button className='font-semibold text-left' style=${{color:cfg.azul}} onClick=${()=>open(o.id)}>${o.cliente} →</button><b style=${{color:mg<metaOf(cfg)?RED:cfg.azul}}>${eur(o.orc-g)} · ${mg.toFixed(0)}%</b></div><${LucroBar} orc=${o.orc} g=${g} cfg=${cfg}/></div>`})}<//>`,
+  barras:html`<${Card} key="b" st=${true} cls=${cl}><div className='flex justify-between items-center mb-2'><h3 className='font-bold'>Orçamento vs. gasto real</h3><${Ver} go=${()=>setSel('barras')}/></div><${BarsChart} data=${data} cfg=${cfg}/><//>`,
+  donut:html`<${Card} key="d" st=${true} cls=${cl}><div className='flex justify-between items-center mb-2'><h3 className='font-bold'>Gastos por categoria</h3><${Ver} go=${()=>setSel('donut')}/></div><${Donut} data=${cat.filter(c=>c.v>0)} cfg=${cfg}/><//>`};
+ if(sel)return html`<${DashDetail} k=${sel} obras=${obras} mats=${mats} mos=${mos} tars=${tars} gasto=${gasto} cfg=${cfg} al=${al} open=${open} back=${()=>setSel(null)}/>`;
+ return html`<div className="grid md:grid-cols-2 gap-4">${vis.length?vis.map(k=>B[k]):html`<div className="mut">Todos os blocos estão ocultos. Ativa-os em Personalizar.</div>`}</div>`}
+
+const NEWOB=new Set();
+function ObraRow({o,g,m,l,ex,upd,del,open,cfg}){
+ const [x,setX]=useState(()=>NEWOB.has(o.id));
+ const p=g/(o.orc||1)*100;
+ const I=(k,t)=>html`<input className='inp' type=${t||'text'} value=${o[k]==null?'':o[k]} onChange=${e=>upd(o.id,k,t==='number'?num(e.target.value):e.target.value)}/>`;
+ return html`<div className='card' style=${{padding:0}}>
+  <button className='w-full text-left' style=${{padding:'12px 14px'}} onClick=${()=>setX(!x)}>
+   <div className='flex items-start gap-3'><div className='flex-1 min-w-0'><div className='font-semibold'>${o.cliente}</div><div className='text-xs mut'>${o.morada}</div></div>
+    <span className='text-[11px] font-semibold px-2 py-0.5 rounded-full' style=${{border:'1px solid var(--bd)',color:cfg.azul}}>${o.estado}</span><span className='mut'>${x?'\u25b4':'\u25be'}</span></div>
+   <div className='mt-3'><${LucroBar} orc=${o.orc} g=${g} cfg=${cfg}/><div className='text-xs mut mt-1'>Gasto ${eur(g)} de ${eur(o.orc)}</div><${PrazoBar} o=${o} cfg=${cfg}/></div></button>
+  ${x&&html`<div style=${{padding:'14px',borderTop:'1px solid var(--bd)'}}>
+   <div className='grid grid-cols-2 md:grid-cols-4 gap-3 text-sm'>${[['Or\u00e7amento',eur(o.orc)],['Gasto',eur(g)],['Restante',eur(o.orc-g),o.orc-g<0?'var(--neg)':cfg.azul],['Recebido',eur(o.recebido)],['Materiais',eur(m)],['M\u00e3o-de-obra',eur(l)],['Execu\u00e7\u00e3o',ex.toFixed(0)+'%'],['Prazo',o.fim?left(o.fim):'-']].map(a=>html`<div key=${a[0]}><div className='text-xs mut'>${a[0]}</div><b style=${{color:a[2]||'var(--fg)'}}>${a[1]}</b></div>`)}</div>
+   <div className='mt-3'><${XBar} p=${ex} c=${overdue(o)>0?RED:cfg.azul}/></div>
+   ${p>ex+20&&ex>0&&html`<div className='mt-2 text-xs font-semibold' style=${{color:'var(--neg)'}}>\u26a0 Gasto \u00e0 frente da execu\u00e7\u00e3o</div>`}
+   <div className='grid grid-cols-2 gap-3 mt-4'>
+    <${F2} l='Cliente'>${I('cliente')}<//>
+    <${F2} l='Estado'><select className='inp' value=${o.estado} onChange=${e=>upd(o.id,'estado',e.target.value)}>${['Planeada','Em curso','Conclu\u00edda'].map(s=>html`<option key=${s}>${s}</option>`)}</select><//>
+    <div className='col-span-2'><${F2} l='Morada'>${I('morada')}<//></div>
+    <${F2} l='In\u00edcio'>${I('inicio','date')}<//><${F2} l='Fim previsto'>${I('fim','date')}<//>
+    <${F2} l='Or\u00e7amento (\u20ac)'>${I('orc','number')}<//><${F2} l='Recebido (\u20ac)'>${I('recebido','number')}<//>
+   </div>
+   <div className='flex flex-wrap justify-between gap-2 mt-4'><${ConfDel} t="Apagar obra" on=${()=>del(o.id)}/><${IB} ic="open" t="Abrir página da obra" pri=${true} txt="Abrir" on=${open}/></div></div>`}</div>`}
+function F2({l,children}){return html`<label className="block"><span className="text-[11px] uppercase tracking-wider mut">${l}</span>${children}</label>`}
+
+function Obras({obras,setObras,gasto,mats,mos,cfg,tars,open}){
+ const [q,setQ]=useState(''),[f,setF]=useState('Todas');
+ const upd=(id,k,v)=>setObras(obras.map(o=>o.id===id?{...o,[k]:v}:o));
+ const del=id=>setObras(obras.filter(o=>o.id!==id));
+ const add=()=>{const id=Math.max(0,...obras.map(o=>o.id))+1;NEWOB.add(id);setObras([{id,cliente:'Novo cliente',morada:'Morada da obra',orc:50000,recebido:0,estado:'Planeada',inicio:'',fim:'',notas:''},...obras])};
+ const rows=obras.filter(o=>(f==='Todas'||o.estado===f)&&(o.cliente+' '+o.morada).toLowerCase().includes(q.toLowerCase()));
+ return html`<div className='space-y-3'>
+  <div className='flex flex-wrap gap-2 items-center'><input className='inp' style=${{flex:'1 1 200px',maxWidth:260}} placeholder='Pesquisar cliente ou morada\u2026' value=${q} onChange=${e=>setQ(e.target.value)}/><div className='flex-1'></div><${IB} ic="plus" t="Nova obra" pri=${true} txt="Obra" on=${add}/></div>
+  <div className='flex gap-1 flex-wrap'>${['Todas','Planeada','Em curso','Conclu\u00edda'].map(s=>html`<button key=${s} onClick=${()=>setF(s)} className='px-3 py-1.5 rounded-full text-xs font-semibold' style=${{background:f===s?'var(--blue)':'var(--card)',color:f===s?'#fff':'var(--fg)',border:'1px solid var(--bd)'}}>${s}</button>`)}</div>
+  <div className='space-y-2'>${rows.map(o=>html`<${ObraRow} key=${o.id} o=${o} g=${gasto(o.id)} ex=${prog(tars,o.id)} cfg=${cfg} upd=${upd} del=${del} open=${()=>open(o.id)} m=${mats.filter(x=>x.obra===o.id).reduce((s,x)=>s+matTot(x),0)} l=${mos.filter(x=>x.obra===o.id).reduce((s,x)=>s+moTot(x),0)}/>`)}</div>
+  ${!rows.length&&html`<div className='text-sm mut text-center py-6'>Nenhuma obra encontrada.</div>`}</div>`}
+function ObraSel({v,onChange,obras}){return html`<select className="inp" value=${v} onChange=${e=>onChange(e.target.value?+e.target.value:0)}><option value="">— Escolher obra —</option>${obras.map(o=>html`<option key=${o.id} value=${o.id}>${o.cliente}</option>`)}</select>`}
+function DelBtn({onClick}){return html`<button onClick=${onClick} className="mut px-2 text-lg" aria-label="Apagar">✕</button>`}
+
+const NEWIDS=new Set();
+const fdate=d=>d?d.split('-').reverse().join('/'):'';
+function Faturas({mats,setMats,obras,cfg,orcs}){
+ const [q,setQ]=useState('');const [fo,setFo]=useState('');const [st,setSt]=useState('');const [cp,setCp]=useState(false);
+ const today=()=>new Date().toISOString().slice(0,10);
+ const nid=()=>Math.max(0,...mats.map(m=>m.id))+1;
+ const ob=id=>(obras.find(o=>o.id===id)||{cliente:''}).cliente;
+ const upd=(id,k,v)=>setMats(mats.map(m=>m.id===id?{...m,...(typeof k==='object'?k:{[k]:v})}:m));
+ const add=()=>{const id=nid();NEWIDS.add(id);setMats([{id,artigo:'Novo artigo',qtd:1,preco:0,iva:23,obra:0,cat:'Outros',data:today(),forn:'',nf:'',pago:false},...mats])};
+ const scan=()=>{const i=nid(),d=today();setMats([{id:i,artigo:'Areia fina (m\u00b3)',qtd:6,preco:28,iva:23,obra:0,cat:'Alvenaria',data:d,forn:'Cimentos do Norte',nf:'',pago:false},{id:i+1,artigo:'Disjuntor 16A',qtd:10,preco:7.4,iva:23,obra:0,cat:'El\u00e9trico',data:d,forn:'Eletro Sul',nf:'',pago:false},{id:i+2,artigo:'Torneira misturadora',qtd:3,preco:46,iva:23,obra:0,cat:'Canaliza\u00e7\u00e3o',data:d,forn:'Hidro Norte',nf:'',pago:false},...mats])};
+ const dup=m=>{const id=nid();NEWIDS.add(id);setMats([{...m,id},...mats])};
+ const del=id=>setMats(mats.filter(x=>x.id!==id));
+ const rows=mats.filter(m=>((m.artigo||'')+' '+(m.forn||'')+' '+(m.nf||'')+' '+m.cat+' '+ob(m.obra)).toLowerCase().includes(q.toLowerCase())&&(fo===''||String(m.obra)===fo)&&(st===''||(st==='p'?!!m.pago:!m.pago))).sort((a,b)=>(b.data||'').localeCompare(a.data||'')||b.id-a.id);
+ const csv=()=>['Data;Fatura;Fornecedor;Artigo;Obra;Categoria;Liquido;IVA;Total;Estado'].concat(rows.map(m=>[m.data,m.nf,m.forn,m.artigo,ob(m.obra),m.cat,(m.qtd*m.preco).toFixed(2),(m.qtd*m.preco*m.iva/100).toFixed(2),matTot(m).toFixed(2),m.pago?'Pago':'Pendente'].join(';'))).join('\n');
+ return html`<div className='space-y-3'>
+  <${Card} st=${true}><div className='flex flex-wrap gap-2'>
+   <input className='inp' style=${{flex:'1 1 200px'}} placeholder='Pesquisar fornecedor, artigo, obra\u2026' value=${q} onChange=${e=>setQ(e.target.value)}/>
+   <select className='inp' style=${{flex:'1 1 150px'}} value=${fo} onChange=${e=>setFo(e.target.value)}><option value=''>Todas as obras</option><option value='0'>Sem obra</option>${obras.map(o=>html`<option key=${o.id} value=${o.id}>${o.cliente}</option>`)}</select>
+   <select className='inp' style=${{flex:'1 1 130px'}} value=${st} onChange=${e=>setSt(e.target.value)}><option value=''>Todos estados</option><option value='p'>Pagas</option><option value='n'>Pendentes</option></select></div>
+   <div className='flex flex-wrap gap-2 mt-3 justify-between items-center'><div className='text-sm mut'>${rows.length} faturas \u00b7 Total <b style=${{color:'var(--fg)'}}>${eur(rows.reduce((s,m)=>s+matTot(m),0))}</b></div>
+   <div className='flex gap-2 flex-wrap'><${IB} ic=${cp?"check":"copy"} t="Copiar CSV" on=${()=>{copy(csv());setCp(true);setTimeout(()=>setCp(false),1500)}}/><${ImportBtn} onAdd=${r=>{const id=nid();NEWIDS.add(id);setMats([{id,...r,obra:0},...mats])}}/><${IB} ic="plus" t="Nova fatura" pri=${true} txt="Fatura" on=${add}/></div></div><//>
+  <${FatList} rows=${rows} obras=${obras} upd=${upd} del=${del} dup=${dup} cfg=${cfg} showObra=${true} orcs=${orcs}/>
+  ${!rows.length&&html`<div className='text-sm mut text-center py-6'>Nenhuma fatura encontrada.</div>`}</div>`}
+const NEWMO=new Set();
+function MoRow({m,obras,upd,del,dup,cfg,orcs}){
+ const [x,setX]=useState(()=>NEWMO.has(m.id));
+ const tot=moTot(m),falta=tot-m.pago,ob=(obras.find(o=>o.id===m.obra)||{}).cliente;
+ const F=(l,el)=>html`<label className='block'><span className='text-[11px] uppercase tracking-wider mut'>${l}</span>${el}</label>`;
+ const T=(k,t)=>html`<input className='inp' type=${t||'text'} step=${t==='number'?'0.01':undefined} value=${m[k]==null?'':m[k]} onChange=${e=>upd(m.id,k,t==='number'?num(e.target.value):e.target.value)}/>`;
+ return html`<div className='card' style=${{padding:0}}>
+  <button className='w-full text-left flex items-center gap-3' style=${{padding:'12px 14px'}} onClick=${()=>setX(!x)}>
+   <div className='flex-1 min-w-0'><div className='font-semibold'>${m.nome||m.funcao}</div><div className='text-xs mut'>${m.nome?m.funcao+' \u00b7 ':''}${m.dias} dias${ob?' \u00b7 '+ob:''}</div></div>
+   <div className='text-right'><div className='font-bold'>${eur(tot)}</div><div className='text-xs font-semibold' style=${{color:falta>0?'var(--neg)':cfg.azul}}>${falta>0?html`<span>Em falta ${eur(falta)}</span>`:'Pago'}</div></div>
+   <span className='mut'>${x?'\u25b4':'\u25be'}</span></button>
+  ${x&&html`<div style=${{padding:'12px 14px 14px',borderTop:'1px solid var(--bd)'}}>
+   <div className='grid grid-cols-2 md:grid-cols-3 gap-3'>
+    ${F('Nome',T('nome'))}${F('Fun\u00e7\u00e3o',T('funcao'))}${F('Obra',html`<${ObraSel} v=${m.obra||''} obras=${obras} onChange=${v=>upd(m.id,'obra',v)}/>`)}
+    ${F('Item do orçamento',html`<${ItemSel} v=${m.item} orcs=${orcs} obra=${m.obra} onChange=${v=>upd(m.id,'item',v)}/>`)}${F('Dias trabalhados',T('dias','number'))}${F('Valor por dia (\u20ac)',T('dia','number'))}${F('J\u00e1 pago (\u20ac)',T('pago','number'))}
+   </div>
+   <div className='flex flex-wrap items-center justify-between gap-2 mt-3 text-sm'>
+    <div className='mut'>Total <b style=${{color:'var(--fg)'}}>${eur(tot)}</b> \u00b7 Pago <b style=${{color:'var(--fg)'}}>${eur(m.pago)}</b> \u00b7 Em falta <b style=${{color:falta>0?'var(--neg)':'var(--fg)'}}>${eur(falta)}</b></div>
+    <div className='flex gap-2 flex-wrap'>${falta>0&&html`<${IB} ic="check" t="Pagar tudo" pri=${true} txt="Pagar" on=${()=>upd(m.id,'pago',tot)}/>`}<${IB} ic="copy" t="Duplicar" on=${()=>dup(m)}/><${ConfDel} t="Apagar" on=${()=>del(m.id)}/></div>
+   </div></div>`}</div>`}
+function MaoObra({mos,setMos,obras,cfg,orcs}){
+ const [q,setQ]=useState('');const [fo,setFo]=useState('');const [st,setSt]=useState('');
+ const nid=()=>Math.max(0,...mos.map(m=>m.id))+1;
+ const ob=id=>(obras.find(o=>o.id===id)||{cliente:''}).cliente;
+ const upd=(id,k,v)=>setMos(mos.map(m=>m.id===id?{...m,...(typeof k==='object'?k:{[k]:v})}:m));
+ const add=()=>{const id=nid();NEWMO.add(id);setMos([{id,funcao:'Novo',nome:'',dias:1,dia:100,obra:0,pago:0},...mos])};
+ const dup=m=>{const id=nid();NEWMO.add(id);setMos([{...m,id},...mos])};
+ const del=id=>setMos(mos.filter(x=>x.id!==id));
+ const rows=mos.filter(m=>((m.nome||'')+' '+m.funcao+' '+ob(m.obra)).toLowerCase().includes(q.toLowerCase())&&(fo===''||String(m.obra)===fo)&&(st===''||(st==='f'?moTot(m)-m.pago>0:moTot(m)-m.pago<=0)));
+ const tot=rows.reduce((s,m)=>s+moTot(m),0),pago=rows.reduce((s,m)=>s+m.pago,0);
+ return html`<div className='space-y-3'>
+  <${Card} st=${true}><div className='flex flex-wrap gap-2'>
+   <input className='inp' style=${{flex:'1 1 200px'}} placeholder='Pesquisar nome, fun\u00e7\u00e3o ou obra\u2026' value=${q} onChange=${e=>setQ(e.target.value)}/>
+   <select className='inp' style=${{flex:'1 1 150px'}} value=${fo} onChange=${e=>setFo(e.target.value)}><option value=''>Todas as obras</option><option value='0'>Sem obra</option>${obras.map(o=>html`<option key=${o.id} value=${o.id}>${o.cliente}</option>`)}</select>
+   <select className='inp' style=${{flex:'1 1 130px'}} value=${st} onChange=${e=>setSt(e.target.value)}><option value=''>Todos estados</option><option value='f'>Com valor em falta</option><option value='p'>Pagos</option></select></div>
+   <div className='flex flex-wrap gap-2 mt-3 justify-between items-center'><div className='text-sm mut'>${rows.length} registos \u00b7 Total <b style=${{color:'var(--fg)'}}>${eur(tot)}</b> \u00b7 Em falta <b style=${{color:'var(--fg)'}}>${eur(tot-pago)}</b></div><${IB} ic="plus" t="Novo subempreiteiro" pri=${true} txt="Pessoa" on=${add}/></div><//>
+  <div className='space-y-2'>${rows.map(m=>html`<${MoRow} key=${m.id} m=${m} obras=${obras} upd=${upd} del=${del} dup=${dup} cfg=${cfg} orcs=${orcs}/>`)}</div>
+  ${!rows.length&&html`<div className='text-sm mut text-center py-6'>Nenhum registo encontrado.</div>`}</div>`}
+function Sec({t,children}){return html`<div className="mb-6"><div className="text-[11px] uppercase tracking-widest gold font-semibold mb-2">${t}</div>${children}</div>`}
+function Seg({v,opts,on}){return html`<div className="flex gap-1 p-1 rounded-xl" style=${{background:'var(--inp)',border:'1px solid var(--bd)'}}>${opts.map(([k,l])=>html`<button key=${k} onClick=${()=>on(k)} className="flex-1 py-1.5 text-sm font-semibold rounded-lg" style=${{background:v===k?'var(--blue)':'transparent',color:v===k?'#fff':'var(--fg)'}}>${l}</button>`)}</div>`}
+
+function Drawer({cfg,set,close,reset,resetData}){
+ const move=(i,d)=>{const o=[...cfg.ordem],j=i+d;if(j<0||j>=o.length)return;[o[i],o[j]]=[o[j],o[i]];set({ordem:o})};
+ return html`<div className="fixed inset-0 z-50 flex justify-end" style=${{background:'rgba(0,0,0,.55)'}} onClick=${close}>
+  <div className="h-full w-full max-w-sm overflow-y-auto" onClick=${e=>e.stopPropagation()} style=${{background:'var(--card)',color:'var(--fg)',padding:'max(20px,env(safe-area-inset-top)) 20px max(20px,env(safe-area-inset-bottom))',borderLeft:'1px solid var(--bd)'}}>
+   <div className="flex justify-between items-center mb-1"><h2 className="text-xl font-extrabold tracking-tight">Personalizar layout</h2><button className="text-2xl px-2" onClick=${close}>×</button></div>
+   <div className="stripes h-1 w-16 mb-5"></div>
+   <${Sec} t="Marca"><input className="inp" value=${cfg.empresa} onChange=${e=>set({empresa:e.target.value})}/><//>
+   <${Sec} t="Meta mínima de lucro (%)"><div className="flex items-center gap-3"><input className="inp" type="number" min="0" max="99" style=${{maxWidth:110}} value=${cfg.meta==null?35:cfg.meta} onChange=${e=>set({meta:e.target.value===''?'':Math.min(99,Math.max(0,parseFloat(e.target.value)||0))})}/><span className="text-xs mut">Lucro = (orçamento − gasto) / orçamento</span></div><//>
+   <${Sec} t="Cores"><div className="flex gap-6 items-center"><label className="flex items-center gap-2 text-sm"><input type="color" value=${cfg.azul} onChange=${e=>set({azul:e.target.value})}/>Azul</label><label className="flex items-center gap-2 text-sm"><input type="color" value=${cfg.ouro} onChange=${e=>set({ouro:e.target.value})}/>Azul claro</label></div><//>
+   <${Sec} t="Tema"><${Seg} v=${cfg.tema} on=${v=>set({tema:v})} opts=${[['auto','Auto'],['claro','Branco'],['escuro','Preto']]}/><//>
+   <${Sec} t="Menu (PC)"><${Seg} v=${cfg.menu} on=${v=>set({menu:v})} opts=${[['lateral','Lateral'],['topo','Topo']]}/><//>
+   <${Sec} t="Densidade"><${Seg} v=${cfg.dens} on=${v=>set({dens:v})} opts=${[['comp','Compacta'],['conf','Confortável']]}/><//>
+   <${Sec} t=${'Cantos arredondados · '+cfg.raio+'px'}><input type="range" min="0" max="28" value=${cfg.raio} onChange=${e=>set({raio:+e.target.value})} className="w-full"/><//>
+   
+   <${Sec} t="Blocos do Dashboard (ordem e visibilidade)">${cfg.ordem.map((k,i)=>html`<div key=${k} className="flex items-center gap-2 py-1.5 text-sm" style=${{borderBottom:'1px solid var(--bd)'}}>
+     <input type="checkbox" checked=${cfg.vis[k]} onChange=${e=>set({vis:{...cfg.vis,[k]:e.target.checked}})}/><span className="flex-1">${BLK[k]}</span>
+     <button className="px-2" onClick=${()=>move(i,-1)}>↑</button><button className="px-2" onClick=${()=>move(i,1)}>↓</button></div>`)}<//>
+   <${Sec} t="Nomes dos separadores"><div className="space-y-2">${Object.keys(cfg.tabs).map(k=>html`<input key=${k} className="inp" value=${cfg.tabs[k]} onChange=${e=>set({tabs:{...cfg.tabs,[k]:e.target.value}})}/>`)}</div><//>
+   <${Conta}/><div className="flex gap-2"><button className='btn2 flex-1' onClick=${reset}>Repor layout</button><${ConfDel} t="Apagar todos os dados" on=${resetData}/><button className="btn flex-1" onClick=${close}>Concluir</button></div>
+  </div></div>`}
+
+function XBar({p,c}){return html`<div style=${{background:'var(--bd)',borderRadius:99,height:8,overflow:'hidden'}}><div style=${{width:p+'%',background:c,height:'100%',borderRadius:99,transition:'width .4s'}}></div></div>`}
+function Tarefas({tars,setTars,obras,cfg}){const [txt,setTxt]=useState('');const [ob,setOb]=useState(obras[0]?obras[0].id:0);const add=()=>{if(!txt.trim()||!ob)return;setTars([{id:Date.now(),obra:+ob,txt:txt.trim(),ok:false},...tars]);setTxt('')};return html`<div className='space-y-4'><${Card} st=${true}><div className='flex flex-wrap gap-2'><input className='inp' style=${{flex:'1 1 200px'}} placeholder='Nova tarefa (ex.: aplicar reboco)' value=${txt} onChange=${e=>setTxt(e.target.value)} onKeyDown=${e=>e.key==='Enter'&&add()}/><div style=${{flex:'0 0 190px'}}><${ObraSel} v=${ob} obras=${obras} onChange=${setOb}/></div><${IB} ic="plus" t="Adicionar" pri=${true} on=${add}/></div><//><div className='grid md:grid-cols-2 xl:grid-cols-3 gap-4'>${obras.map(o=>{const p=prog(tars,o.id);return html`<${Card} key=${o.id} st=${true}><div className='flex justify-between items-baseline mb-2'><b>${o.cliente}</b><b style=${{color:cfg.azul}}>${p.toFixed(0)}%</b></div><${XBar} p=${p} c=${cfg.azul}/><div className='mt-3 space-y-1'>${tars.filter(a=>a.obra===o.id).map(a=>html`<div key=${a.id} className='flex items-center gap-2 text-sm'><input type='checkbox' checked=${a.ok} onChange=${()=>setTars(tars.map(x=>x.id===a.id?{...x,ok:!x.ok}:x))}/><span className='flex-1' style=${{textDecoration:a.ok?'line-through':'none',opacity:a.ok?.5:1}}>${a.txt}</span><${DelBtn} onClick=${()=>setTars(tars.filter(x=>x.id!==a.id))}/></div>`)}</div><//>`})}</div></div>`}
+function Detalhe({o,obras,setObras,mats,mos,tars,cfg,gasto,close}){const g=gasto(o.id),m=mats.filter(x=>x.obra===o.id),l=mos.filter(x=>x.obra===o.id),t=tars.filter(x=>x.obra===o.id),p=prog(tars,o.id);const R=(a,b,k)=>html`<div key=${k} className='flex justify-between gap-3 py-1.5 text-sm' style=${{borderBottom:'1px solid var(--bd)'}}><span>${a}</span><b className='whitespace-nowrap'>${b}</b></div>`;const H=s=>html`<div className='text-[11px] uppercase tracking-widest gold font-semibold mt-5 mb-1'>${s}</div>`;return html`<div className='fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-6' style=${{background:'rgba(0,0,0,.6)'}} onClick=${close}><div className='card w-full max-w-2xl overflow-y-auto' style=${{maxHeight:'90vh'}} onClick=${e=>e.stopPropagation()}><div className='flex justify-between items-start'><div><div className='text-xl font-extrabold tracking-tight'>${o.cliente}</div><div className='text-sm mut'>${o.morada}</div></div><button className='text-2xl px-2' onClick=${close}>×</button></div><div className='stripes h-1 w-16 my-3'></div><div className='grid grid-cols-2 md:grid-cols-4 gap-3 text-sm'>${[['Orçamento',eur(o.orc)],['Gasto',eur(g)],['Margem',eur(o.orc-g)],['Recebido',eur(o.recebido)]].map(a=>html`<div key=${a[0]}><div className='text-xs mut'>${a[0]}</div><b>${a[1]}</b></div>`)}</div>${H('Execução · '+p.toFixed(0)+'%')}<${XBar} p=${p} c=${cfg.azul}/>${H('Materiais')}${m.length?m.map(x=>R(x.artigo+' ×'+x.qtd,eur(matTot(x)),x.id)):html`<div className='text-sm mut'>Sem materiais.</div>`}${H('Mão-de-obra')}${l.length?l.map(x=>R(x.funcao+' · '+x.dias+' d',eurS(moTot(x))+' (falta '+eurS(moTot(x)-x.pago)+')',x.id)):html`<div className='text-sm mut'>Sem registos.</div>`}${H('Tarefas')}${t.length?t.map(x=>R((x.ok?'✓ ':'○ ')+x.txt,'',x.id)):html`<div className='text-sm mut'>Sem tarefas.</div>`}${H('Notas')}<textarea className='inp' rows='3' placeholder='Notas da obra…' value=${o.notas||''} onChange=${e=>setObras(obras.map(x=>x.id===o.id?{...x,notas:e.target.value}:x))}></textarea></div></div>`}
+function ObraPage({orcs,base,criarOrc,openOrc,o,obras,setObras,mats,setMats,mos,tars,setTars,cfg,gasto,back}){const [q,setQ]=useState('');const [cat,setCat]=useState('');const [cp,setCp]=useState(false);const all=mats.filter(m=>m.obra===o.id),lab=mos.filter(m=>m.obra===o.id),tk=tars.filter(t=>t.obra===o.id);const net=m=>m.qtd*m.preco,vat=m=>net(m)*m.iva/100;const S=(f,a)=>a.reduce((s,m)=>s+f(m),0);const rows=all.filter(m=>((m.artigo||'')+' '+(m.forn||'')+' '+(m.nf||'')).toLowerCase().includes(q.toLowerCase())&&(!cat||m.cat===cat)).sort((a,b)=>(b.data||'').localeCompare(a.data||'')||b.id-a.id);const B0=o.orc||1,g=gasto(o.id),sm=S(matTot,all),sl=S(moTot,lab),p=g/B0*100,ex=prog(tars,o.id),pend=S(matTot,all.filter(m=>!m.pago)),fMO=S(m=>moTot(m)-m.pago,lab),wm=Math.min(sm/B0*100,100),wl=Math.min(sl/B0*100,100-wm);const cats=CATS.map(c=>[c,S(matTot,all.filter(m=>m.cat===c))]).concat([['Mão-de-obra',sl]]).filter(a=>a[1]>0);
+const upd=(id,k,v)=>setMats(mats.map(m=>m.id===id?{...m,...(typeof k==='object'?k:{[k]:v})}:m));const add=()=>{const id=Math.max(0,...mats.map(m=>m.id))+1;NEWIDS.add(id);setMats([{id,artigo:'Nova despesa',qtd:1,preco:0,iva:23,obra:o.id,cat:'Outros',data:new Date().toISOString().slice(0,10),forn:'',nf:'',pago:false},...mats])};const dupF=m=>{const id=Math.max(0,...mats.map(x=>x.id))+1;NEWIDS.add(id);setMats([{...m,id},...mats])};const delF=id=>setMats(mats.filter(x=>x.id!==id));const upO=(k,v)=>setObras(obras.map(x=>x.id===o.id?{...x,[k]:v}:x));const I=(k,t)=>html`<input className='inp' type=${t||'text'} value=${o[k]||''} onChange=${e=>upO(k,t==='number'?num(e.target.value):e.target.value)}/>`;const csv=()=>['Data;Fatura;Fornecedor;Artigo;Categoria;Qtd;Preco;Liquido;IVA %;IVA;Total;Estado'].concat(rows.map(m=>[m.data,m.nf,m.forn,m.artigo,m.cat,m.qtd,m.preco,net(m).toFixed(2),m.iva,vat(m).toFixed(2),matTot(m).toFixed(2),m.pago?'Pago':'Pendente'].join(';'))).join('\n');
+return html`<div className='space-y-4'><div className='flex flex-wrap items-center justify-between gap-2'><button className='btn2' onClick=${back}>← Todas as obras</button><div className='text-sm mut'>${o.morada}${o.fim?' · Prazo: '+left(o.fim):''}</div></div>
+<${Card} st=${true}><div className='flex flex-wrap items-end justify-between gap-2'><div><div className='text-[11px] uppercase tracking-widest gold font-semibold'>Gasto vs. orçamento inicial</div><div className='text-3xl font-extrabold tracking-tight' style=${{color:g>o.orc?'var(--neg)':'var(--fg)'}}>${eur(g)} <span className='text-base mut font-semibold'>de ${eur(o.orc)}</span></div></div><div className='text-right'><div className='text-3xl font-extrabold' style=${{color:lucroP(o.orc,g)<metaOf(cfg)?RED:cfg.azul}}>${lucroP(o.orc,g).toFixed(0)}%</div><div className='text-xs mut'>${g>o.orc?'Acima do orçamento':'de lucro previsto'}</div></div></div>
+<div className='my-3' style=${{background:'var(--bd)',borderRadius:99,height:14,overflow:'hidden',display:'flex'}}><div style=${{width:wm+'%',background:cfg.azul}}></div><div style=${{width:wl+'%',background:cfg.ouro}}></div></div>
+<div className='mb-4'><${LucroBar} orc=${o.orc} g=${g} cfg=${cfg}/></div>
+<div className='flex flex-wrap gap-x-5 gap-y-1 text-xs mb-4'><span><b style=${{color:cfg.azul}}>■</b> Materiais ${eur(sm)}</span><span><b style=${{color:cfg.ouro}}>■</b> Mão-de-obra ${eur(sl)}</span><span className='mut'>■ Disponível ${eur(Math.max(o.orc-g,0))}</span></div>
+<div className='grid grid-cols-2 md:grid-cols-4 gap-3 text-sm'>${[['Orçamento inicial',eur(o.orc)],['Restante / margem',eur(o.orc-g),o.orc-g<0?'var(--neg)':cfg.azul],['Recebido do cliente',eur(o.recebido)],['Por receber',eur(o.orc-o.recebido)],['Faturas por pagar',eur(pend),pend>0?'var(--neg)':''],['Mão-de-obra em falta',eur(fMO),fMO>0?'var(--neg)':''],['Lucro atual',eur(o.recebido-g),o.recebido-g<0?'var(--neg)':cfg.azul],['Execução',ex.toFixed(0)+'%']].map(a=>html`<div key=${a[0]}><div className='text-xs mut'>${a[0]}</div><b style=${{color:a[2]||'var(--fg)'}}>${a[1]}</b></div>`)}</div><//>
+<${ObraOrc} o=${o} orcs=${orcs} mats=${mats} mos=${mos} base=${base} cfg=${cfg} criarOrc=${criarOrc} openOrc=${openOrc}/>
+<div className='grid md:grid-cols-2 gap-4'><${Card} st=${true}><h3 className='font-bold mb-3'>Dados da obra</h3><div className='grid grid-cols-2 gap-2'><${F2} l='Cliente'>${I('cliente')}<//><${F2} l='Estado'><select className='inp' value=${o.estado} onChange=${e=>upO('estado',e.target.value)}>${['Planeada','Em curso','Concluída'].map(s=>html`<option key=${s}>${s}</option>`)}</select><//><div className='col-span-2'><${F2} l='Morada'>${I('morada')}<//></div><${F2} l='Início'>${I('inicio','date')}<//><${F2} l='Fim previsto'>${I('fim','date')}<//><${F2} l='Orçamento inicial (€)'>${I('orc','number')}<//><${F2} l='Recebido (€)'>${I('recebido','number')}<//></div><//>
+<${Card} st=${true}><h3 className='font-bold mb-3'>Gastos por categoria</h3>${cats.length?cats.map(a=>html`<div key=${a[0]} className='mb-2'><div className='flex justify-between text-sm'><span>${a[0]}</span><b>${eur(a[1])} · ${(g?a[1]/g*100:0).toFixed(0)}%</b></div><${XBar} p=${g?a[1]/g*100:0} c=${cfg.ouro}/></div>`):html`<div className='text-sm mut'>Ainda sem despesas.</div>`}<//></div>
+<${Card} st=${true}><div className='flex flex-wrap gap-2 items-center mb-3'><h3 className='font-bold mr-2'>Faturas e despesas</h3><input className='inp' style=${{flex:'1 1 150px',maxWidth:220}} placeholder='Pesquisar\u2026' value=${q} onChange=${e=>setQ(e.target.value)}/><select className='inp' style=${{flex:'1 1 130px',maxWidth:170}} value=${cat} onChange=${e=>setCat(e.target.value)}><option value=''>Todas categorias</option>${CATS.map(c=>html`<option key=${c}>${c}</option>`)}</select><div className='flex-1'></div><${IB} ic=${cp?"check":"copy"} t="Copiar CSV" on=${()=>{copy(csv());setCp(true);setTimeout(()=>setCp(false),1500)}}/><${ImportBtn} onAdd=${r=>{const id=Math.max(0,...mats.map(m=>m.id))+1;NEWIDS.add(id);setMats([{id,...r,obra:o.id},...mats])}}/><${IB} ic="plus" t="Nova despesa" pri=${true} txt="Despesa" on=${add}/></div>
+<${FatList} rows=${rows} obras=${obras} upd=${upd} del=${delF} dup=${dupF} cfg=${cfg} showObra=${false} orcs=${orcs}/>
+${!rows.length&&html`<div className='text-sm mut py-3'>Sem faturas ou despesas para esta obra.</div>`}<div className='flex flex-wrap justify-end gap-x-6 gap-y-1 mt-4 text-sm'><span className='mut'>L\u00edquido <b style=${{color:'var(--fg)'}}>${eur(S(net,rows))}</b></span><span className='mut'>IVA <b style=${{color:'var(--fg)'}}>${eur(S(vat,rows))}</b></span><span className='mut'>Pago <b style=${{color:cfg.azul}}>${eur(S(matTot,rows.filter(m=>m.pago)))}</b></span><span className='mut'>Pendente <b style=${{color:'var(--neg)'}}>${eur(S(matTot,rows.filter(m=>!m.pago)))}</b></span><span className='font-extrabold text-base'>Total ${eur(S(matTot,rows))}</span></div><//>
+<${Card} st=${true}><h3 className='font-bold mb-3'>Mão-de-obra / subempreiteiros</h3><div className='overflow-x-auto'><table className='w-full' style=${{minWidth:640,borderCollapse:'collapse'}}><thead><tr>${['Função','Nome','Dias','€ / dia','Total','Pago','Em falta'].map(h=>html`<th key=${h} className='th'>${h}</th>`)}</tr></thead><tbody>${lab.map(m=>html`<tr key=${m.id}><td className='td'>${m.funcao}</td><td className='td'>${m.nome}</td><td className='td'>${m.dias}</td><td className='td'>${eur(m.dia)}</td><td className='td font-semibold'>${eur(moTot(m))}</td><td className='td'>${eur(m.pago)}</td><td className='td font-bold' style=${{color:moTot(m)-m.pago>0?'var(--neg)':cfg.azul}}>${eur(moTot(m)-m.pago)}</td></tr>`)}</tbody></table></div>${!lab.length&&html`<div className='text-sm mut py-3'>Sem registos. Adiciona na aba Mão-de-obra.</div>`}<div className='text-right text-sm font-bold mt-3'>Total ${eur(sl)} · Em falta ${eur(fMO)}</div><//>
+<${Card} st=${true}><h3 className='font-bold mb-2'>Execução e tarefas · ${ex.toFixed(0)}%</h3><${XBar} p=${ex} c=${overdue(o)>0?RED:cfg.azul}/><${PrazoBar} o=${o} cfg=${cfg}/><div className='mt-3 grid md:grid-cols-2 gap-x-6 gap-y-1'>${tk.map(t=>html`<label key=${t.id} className='flex items-center gap-2 text-sm'><input type='checkbox' checked=${t.ok} onChange=${()=>setTars(tars.map(x=>x.id===t.id?{...x,ok:!x.ok}:x))}/>${t.txt}</label>`)}</div>${!tk.length&&html`<div className='text-sm mut mt-2'>Sem tarefas. Adiciona na aba Tarefas.</div>`}<h3 className='font-bold mt-5 mb-2'>Notas</h3><textarea className='inp' rows='3' placeholder='Notas da obra…' value=${o.notas||''} onChange=${e=>upO('notas',e.target.value)}></textarea><//></div>`}
+const MN=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+function Ver({go}){return html`<button className='text-xs font-semibold' style=${{color:'var(--blue)'}} onClick=${go}>Ver detalhes →</button>`}
+function Tbl({h,r}){return html`<div className='overflow-x-auto'><table className='w-full' style=${{borderCollapse:'collapse',minWidth:480}}><thead><tr>${h.map(x=>html`<th key=${x} className='th'>${x}</th>`)}</tr></thead><tbody>${r.map((row,i)=>html`<tr key=${i}>${row.map((c,j)=>html`<td key=${j} className=${'td'+(j===0?' font-semibold':'')}>${c}</td>`)}</tr>`)}</tbody></table></div>`}
+function Kp({items}){return html`<div className='grid grid-cols-2 md:grid-cols-4 gap-3'>${items.map(a=>html`<div key=${a[0]} className='card text-center md:text-left'><div className='text-xs mut'>${a[0]}</div><div className='text-xl font-extrabold tracking-tight mt-1' style=${{color:a[2]||'var(--fg)'}}>${a[1]}</div>${a[3]&&html`<div className='text-xs mut mt-1'>${a[3]}</div>`}</div>`)}</div>`}
+function Months({data,c}){const mx=Math.max(...data.map(d=>d.v),1);const W=600,H=190,bw=Math.min(70,W/data.length-24);return html`<svg viewBox=${'0 0 '+W+' '+H} className='w-full' style=${{color:'var(--mut)'}}>${data.map((d,i)=>{const x=(i+.5)*W/data.length,h=d.v/mx*(H-60);return html`<g key=${i}><rect x=${x-bw/2} y=${H-28-h} width=${bw} height=${h} rx='5' fill=${c}/><text x=${x} y=${H-34-h} fontSize='11' textAnchor='middle' fill='currentColor'>${eurS(d.v)}</text><text x=${x} y=${H-8} fontSize='12' textAnchor='middle' fill='currentColor'>${d.n}</text></g>`})}</svg>`}
+function DashDetail({k,obras,mats,mos,tars,gasto,cfg,al,open,back}){
+const S=(f,a)=>a.reduce((s,m)=>s+f(m),0);const K={lucro:'lucro',desp:'desp',donut:'desp',ativas:'ativas',orc:'orc',barras:'orc',margem:'orc',receber:'receber',pagar:'pagar',alertas:'alertas'}[k];
+const TT={lucro:'Lucro total',desp:'Despesas totais',ativas:'Obras ativas',orc:'Orçamento vs. gasto',receber:'A receber dos clientes',pagar:'A pagar',alertas:'Alertas e estado das obras'};
+const po=obras.map(o=>{const g=gasto(o.id);return {o,g,p:g/(o.orc||1)*100,ex:prog(tars,o.id)}});const nm=o=>o.cliente.split(' ')[0];const on=id=>(obras.find(o=>o.id===id)||{cliente:'Sem obra'}).cliente;
+const L=o=>html`<button className='font-semibold text-left' style=${{color:cfg.azul}} onClick=${()=>open(o.id)}>${o.cliente}</button>`;
+const orc=S(x=>x.o.orc,po),rec=S(x=>x.o.recebido,po),gt=S(x=>x.g,po),semM=S(matTot,mats.filter(m=>!m.obra)),semL=S(moTot,mos.filter(m=>!m.obra)),desp=gt+semM+semL,mT=S(matTot,mats),lT=S(moTot,mos),pend=S(matTot,mats.filter(m=>!m.pago)),fMO=S(m=>moTot(m)-m.pago,mos);
+const pc=(a,b)=>(b?a/b*100:0).toFixed(0)+'%';const red='var(--neg)';
+const cat=CATS.map(c=>({n:c,v:S(matTot,mats.filter(m=>m.cat===c))})).concat([{n:'Mão-de-obra',v:lT}]).filter(c=>c.v>0);
+const mon={};mats.forEach(m=>{const d=(m.data||'').slice(0,7);if(d)mon[d]=(mon[d]||0)+matTot(m)});const meses=Object.keys(mon).sort().map(d=>({n:MN[+d.slice(5)-1]+' '+d.slice(2,4),v:mon[d]}));
+const forn={};mats.forEach(m=>{const f=m.forn||'Sem fornecedor';forn[f]=(forn[f]||0)+matTot(m)});const fl=Object.keys(forn).sort((a,b)=>forn[b]-forn[a]);
+const C=(t,ch)=>html`<${Card} key=${t} st=${true}><h3 className='font-bold mb-3'>${t}</h3>${ch}<//>`;const Kq=items=>html`<${Kp} key='kp' items=${items}/>`;
+const health=html`<${Tbl} h=${['Obra','Estado','Prazo','Execução','Orçamento usado','Gasto']} r=${po.map(x=>[L(x.o),x.o.estado,x.o.fim?left(x.o.fim):'-',x.ex.toFixed(0)+'%',x.p.toFixed(0)+'%',eur(x.g)])}/>`;
+const n=e=>obras.filter(o=>o.estado===e).length;
+const V={
+lucro:[Kq([['Lucro total',eur(rec-desp),rec-desp<0?red:cfg.azul,'recebido − despesas'],['Recebido',eur(rec)],['Despesas',eur(desp)],['Margem',pc(rec-desp,rec),null,'lucro / recebido']]),C('Recebido vs. gasto por obra',html`<${BarsChart} data=${po.map(x=>({nome:nm(x.o),orc:x.o.recebido,gasto:x.g}))} cfg=${cfg} la='Recebido' lb='Gasto'/>`),C('Lucro por obra',html`<${Tbl} h=${['Obra','Recebido','Gasto','Lucro','Margem']} r=${po.map(x=>[L(x.o),eur(x.o.recebido),eur(x.g),eur(x.o.recebido-x.g),pc(x.o.recebido-x.g,x.o.recebido)])}/>`)],
+desp:[Kq([['Despesas totais',eur(desp),null,'materiais + mão-de-obra'],['Materiais',eur(mT)],['Mão-de-obra',eur(lT)],['Faturas por pagar',eur(pend),pend>0?red:null]]),C('Por categoria',html`<${Donut} data=${cat} cfg=${cfg}/>`),C('Evolução mensal (materiais)',meses.length?html`<${Months} data=${meses} c=${cfg.azul}/>`:html`<div className='text-sm mut'>Sem datas nas faturas.</div>`),C('Despesa por obra',html`<${Tbl} h=${['Obra','Materiais','Mão-de-obra','Total']} r=${po.map(x=>[L(x.o),eur(S(matTot,mats.filter(m=>m.obra===x.o.id))),eur(S(moTot,mos.filter(m=>m.obra===x.o.id))),eur(x.g)]).concat(semM+semL>0?[['Sem obra atribuída',eur(semM),eur(semL),eur(semM+semL)]]:[])}/>`),C('Principais fornecedores',html`<${Tbl} h=${['Fornecedor','Total','% dos materiais']} r=${fl.map(f=>[f,eur(forn[f]),pc(forn[f],mT)])}/>`)],
+ativas:[Kq([['Em curso',n('Em curso'),cfg.azul],['Planeadas',n('Planeada')],['Concluídas',n('Concluída')],['Execução média',(po.length?S(x=>x.ex,po)/po.length:0).toFixed(0)+'%']]),C('Execução vs. orçamento usado',html`<div>${po.map(x=>html`<div key=${x.o.id} className='mb-4'><div className='flex justify-between text-sm mb-1'><span>${L(x.o)}</span><span className='mut'>${x.ex.toFixed(0)}% executado · ${x.p.toFixed(0)}% do orçamento</span></div><${XBar} p=${x.ex} c=${cfg.azul}/><div style=${{height:6}}></div><${XBar} p=${Math.min(x.p,100)} c=${x.p>100?red:cfg.ouro}/></div>`)}<div className='text-xs mut'><b style=${{color:cfg.azul}}>■</b> Execução das tarefas   <b style=${{color:cfg.ouro}}>■</b> Orçamento usado</div></div>`),C('Estado das obras',health)],
+orc:[Kq([['Orçamento total',eur(orc)],['Gasto',eur(gt)],['Restante',eur(orc-gt),orc-gt<0?red:cfg.azul],['Usado',pc(gt,orc)]]),C('Orçamento vs. gasto real',html`<${BarsChart} data=${po.map(x=>({nome:nm(x.o),orc:x.o.orc,gasto:x.g}))} cfg=${cfg}/>`),C('Peso de cada obra no orçamento',html`<${Donut} data=${obras.map(o=>({n:nm(o),v:o.orc}))} cfg=${cfg}/>`),C('Detalhe por obra',html`<${Tbl} h=${['Obra','Orçamento','Gasto','Restante','% usado']} r=${po.map(x=>[L(x.o),eur(x.o.orc),eur(x.g),eur(x.o.orc-x.g),x.p.toFixed(0)+'%'])}/>`)],
+receber:[Kq([['Orçamento total',eur(orc)],['Recebido',eur(rec),cfg.azul],['A receber',eur(orc-rec)],['Já recebido',pc(rec,orc)]]),C('Recebido vs. orçamento',html`<${BarsChart} data=${po.map(x=>({nome:nm(x.o),orc:x.o.orc,gasto:x.o.recebido}))} cfg=${cfg} la='Orçamento' lb='Recebido'/>`),C('Por obra',html`<${Tbl} h=${['Obra','Orçamento','Recebido','Por receber','% recebido']} r=${po.map(x=>[L(x.o),eur(x.o.orc),eur(x.o.recebido),eur(x.o.orc-x.o.recebido),pc(x.o.recebido,x.o.orc)])}/>`)],
+pagar:[Kq([['Total a pagar',eur(pend+fMO),red,'faturas + mão-de-obra'],['Faturas pendentes',eur(pend)],['Mão-de-obra em falta',eur(fMO)],['Mão-de-obra já paga',eur(S(m=>m.pago,mos))]]),C('Subempreiteiros: total vs. pago',html`<${BarsChart} data=${mos.map(m=>({nome:(m.nome||m.funcao).split(' ')[0],orc:moTot(m),gasto:m.pago}))} cfg=${cfg} la='Total' lb='Pago'/>`),C('Mão-de-obra em falta',html`<${Tbl} h=${['Nome','Função','Obra','Total','Pago','Em falta']} r=${mos.filter(m=>moTot(m)-m.pago>0).map(m=>[m.nome||'-',m.funcao,on(m.obra),eur(moTot(m)),eur(m.pago),eur(moTot(m)-m.pago)])}/>`),C('Faturas por pagar',html`<${Tbl} h=${['Data','Fornecedor','Nº fatura','Obra','Total']} r=${mats.filter(m=>!m.pago).sort((a,b)=>(a.data||'').localeCompare(b.data||'')).map(m=>[m.data||'-',m.forn||'-',m.nf||'-',on(m.obra),eur(matTot(m))])}/>`)],
+alertas:[C('Alertas ativos',al.length?al.map((a,i)=>html`<div key=${i} className='flex items-center gap-2 text-sm py-1.5' style=${{borderBottom:'1px solid var(--bd)'}}><b style=${{color:a[0]}}>●</b>${a[1]}</div>`):html`<div className='text-sm mut'>Tudo em ordem ✓</div>`),C('Estado das obras',health)]};
+return html`<div className='space-y-4'><div className='flex items-center justify-between gap-3'><button className='btn2' onClick=${back}>← Dashboard</button><h2 className='text-xl font-extrabold tracking-tight text-right'>${TT[K]}</h2></div>${V[K]}</div>`}
+/* ======== v5: Orçamentos (lógica do Excel), Base de dados, anexos ======== */
+const uid=()=>'x'+Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-3);
+const parseNum=s=>{const n=parseFloat(String(s).trim().replace(/\s/g,'').replace(',','.'));return isNaN(n)?0:n};
+const pf=x=>((x||0)*100).toLocaleString('pt-PT',{maximumFractionDigits:1})+'%';
+function NumIn({v,on,dec=2,cls='',ph,blank}){
+ const [t,setT]=useState(null);
+ const fmt=n=>{const r=Math.round(n*Math.pow(10,dec))/Math.pow(10,dec);return (Number.isInteger(r)?String(r):r.toFixed(dec)).replace('.',',')};
+ const shown=t!==null?t:(v===''||v==null?'':fmt(v));
+ return html`<input className=${'inp '+cls} inputMode="decimal" placeholder=${ph} value=${shown} onFocus=${e=>{setT(shown);try{e.target.select()}catch(x){}}} onChange=${e=>{setT(e.target.value);on(e.target.value.trim()===''?(blank?'':0):parseNum(e.target.value))}} onBlur=${()=>setT(null)}/>`}
+function Pct({v,on}){return html`<${NumIn} v=${(v||0)*100} on=${x=>on(x/100)}/>`}
+function Modal({children,close,wide=640}){return html`<div className="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-6" style=${{background:'rgba(0,0,0,.6)'}} onClick=${close}><div className="modal-body w-full" style=${{maxWidth:wide,maxHeight:'90vh'}} onClick=${e=>e.stopPropagation()}>${children}</div></div>`}
+
+/* ---- dados iniciais ---- */
+const TEXTOS0=[{"id":"t1","cod":"000","tipo":"Geral","cap":"Demolições","descr":"Execução de demolição de paredes interiores, pavimento cerâmico, artigos sanitários, carpintarias e outros, assim como todos os trabalhos referentes a demolições e desmontagens não mencionados mas que podem ser necessários com o decorrer da obra, inluindo transporte e depósito de lixos em vazadouro próprio, de acordo com projeto e visita ao local.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t2","cod":"001","tipo":"Casas de banho (WC)","cap":"Alvenaria","descr":"Fornecimento e execução de argamassa cimentícia de enchimento e regularização para pavimento interior, incluindo todos os trabalhos e acessórios necessários para a concretização dos trabalhos de acordo com projeto e visita ao local.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t3","cod":"002","tipo":"Cozinha","cap":"Alvenaria","descr":"Fornecimento e execução de argamassa branca de regularização para paredes existentes, incluindo todos os trabalhos e acessórios necessários para a concretização dos trabalhos de acordo com projeto e visita ao local.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t4","cod":"003","tipo":"Relocalização de porta de casa de banho","cap":"Pladur","descr":"Fornecimento e montagem de paredes divisórias (esp: 10cm), com placas de gesso cartonado, tipo \"KNAUF 12.5mm\", constituída por estrutura com perfis metálicos, incluindo massas, bandas para juntas e acessórios de fixação, abertura de negativos para especialidades se necessário, lixagem, pronto a receber pintura e todos os acessórios necessários para a concretização dos trabalhos de acordo com projeto de arquitetura.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t5","cod":"004","tipo":"Casas de banho","cap":"Pladur","descr":"Fornecimento e montagem de forras de paredes, com placas de gesso cartonado, incluindo massas, bandas para juntas e acessórios de fixação, abertura de negativos para especialidades se necessário, lixagem, pronto a receber pintura e todos os acessórios necessários para a concretização dos trabalhos de acordo com projeto de arquitetura.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t6","cod":"005","tipo":"Quartos, cozinha, sala e corredor","cap":"Pladur","descr":"Fornecimento e montagem de teto standard, tipo \"KNAUF 12.5mm\", constituída por estrutura com perfis metálicos, com placas de gesso cartonado, incluindo massas, bandas para juntas e acessórios de fixação, abertura de negativos para especialidades se necessário, lixagem, pronto a receber pintura e todos os acessórios necessários para a concretização dos trabalhos de acordo com projeto de arquitetura.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t7","cod":"006","tipo":"Casas de banho","cap":"Pladur","descr":"Fornecimento e montagem de teto hidrófugo, tipo \"KNAUF 12.5mm\", constituída por estrutura com perfis metálicos, com placas de gesso cartonado, incluindo massas, bandas para juntas e acessórios de fixação, abertura de negativos para especialidades se necessário, lixagem, pronto a receber pintura e todos os acessórios necessários para a concretização dos trabalhos de acordo com projeto de arquitetura.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t8","cod":"007","tipo":"Casas de banho","cap":"Revestimentos / Pavimentos","descr":"Fornecimento e aplicação de pavimento cerâmico para aplicação WC, incluindo todos os acessórios necessários para a concretização dos trabalhos de acordo com projeto de arquitetura.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t9","cod":"008","tipo":"Casas de banho","cap":"Revestimentos / Pavimentos","descr":"Fornecimento e aplicação de revestimento cerâmico para aplicação em paredes de WC, incluindo todos os acessórios necessários para a concretização dos trabalhos de acordo com projeto de arquitetura.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t10","cod":"009","tipo":"Cozinha","cap":"Revestimentos / Pavimentos","descr":"Fornecimento e aplicação de revestimento cerâmico em paredes da Cozinha, incluindo todos os acessórios necessários para a concretização dos trabalhos de acordo com projeto de arquitetura.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t11","cod":"010","tipo":"Geral","cap":"Revestimentos / Pavimentos","descr":"Fornecimento e execução de rodapé em PVC, incluindo todos os materiais e acessórios necessários para a concretização dos trabalhos de acordo com projeto de arquitetura.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t12","cod":"011","tipo":"Geral","cap":"Pintura","descr":"Fornecimento e aplicação de pintura em paredes interiores e tectos interiores, com tinta aquosa mate \"super lavável\" na cor branco RAL 9005, nas demãos necessárias a um perfeito acabamento, incluindo uma demão de primário, limpeza da base, trabalhos preparatórios e todos os materiais e acessórios necessários para a concretização dos trabalhos.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t14","cod":"013","tipo":"wc's","cap":"Fornecimentos","descr":"Fornecimento de sanita do tipo japonesa com duche integrado incluindo todos os materiais e acessórios próprios para a sua correta instalação.","un":"UN","qt":2,"mat":0,"mo":0,"sub":false},{"id":"t15","cod":"014","tipo":"wc serviço","cap":"Fornecimentos","descr":"Fornecimento e instalação de móvel de wc com lavatório incluindo todos os materiais e acessórios próprios para a sua correta instalação.","un":"UN","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t16","cod":"015","tipo":"wc apoio aos quartos","cap":"Fornecimentos","descr":"Fornecimento e instalação de móvel de wc com lavatório, incluindo todos os materiais e acessórios próprios para a sua correta instalação.","un":"UN","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t17","cod":"019","tipo":"wc's","cap":"Fornecimentos","descr":"Fornecimento de espelho para wc incluindo todos os materiais e acessórios próprios para a sua correta instalação.","un":"UN","qt":2,"mat":0,"mo":0,"sub":false},{"id":"t18","cod":"024","tipo":"Porta de entrada","cap":"Carpintaria","descr":"Fornecimento e aplicação de porta de entrada, incluindo todos os materiais e acessórios necessários para a sua correta concretização.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t19","cod":"026","tipo":"Hall de entrada","cap":"Carpintaria","descr":"Fornecimento e montagem de armário roupeiro, incluindo todos os materiais e acessórios necessários para a sua correta concretização.","un":"UN","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t20","cod":"027","tipo":"Quartos, cozinha, sala e corredor","cap":"Carpintaria","descr":"Fornecimento e montagem de armário roupeiro, incluindo todos os materiais e acessórios necessários para a sua correta concretização.","un":"UN","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t21","cod":"030","tipo":"Lavandaria","cap":"Carpintaria","descr":"Fornecimento e montagem de armário para lavandaria, incluindo todos os materiais e acessórios necessários para a sua correta concretização.","un":"UN","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t22","cod":"031","tipo":"Cozinha","cap":"Carpintaria","descr":"Fornecimento e montagem de cozinha, incluindo todos os materiais e acessórios necessários para a sua correta concretização (não inclui eletrodomésticos).","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t23","cod":"032","tipo":"Sala","cap":"Carpintaria","descr":"Fornecimento e aplicação de ripado, ou outro elemento, para encobrir a janela existente da sala que dá para o quarto interior.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t24","cod":"034","tipo":"Diversos","cap":"Eletricidade","descr":"Fornecimento e exceução de nova instalação elétrica, incluindo todos os acessórios e trabalhos à sua boa execução.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false},{"id":"t25","cod":"041","tipo":"Limpeza","cap":"","descr":"Execução de limpeza final de obra, incluindo os trabalhos de limpeza de sujidade e pó juntamente com os outros restos de fim de obra depositados no contentor de resíduos para transporte a aterro autorizado.","un":"VG","qt":1,"mat":0,"mo":0,"sub":false}];
+const BASE0={
+ params:{A:{mat:.5,mo:.5,mm:.1,ind:.05,buf:0,forn:.25,sub:.25},B:{mat:.5,mo:.5,mm:.15,ind:.1,buf:0,forn:.25,sub:.25},C:{mat:0,mo:0,mm:0,ind:0,buf:0,forn:0,sub:0}},
+ catDesc:{A:'Obras acima de 10.000 €',B:'Obras abaixo de 10.000 €',C:'Personalizada (por preencher)'},
+ unidades:[['UN','Unidade'],['M2','Metro Quadrado'],['M3','Metro Cúbico'],['ML','Metro Linear'],['KG','Kilogramas'],['L','Litros'],['VG','Valor Global']],
+ espacos:['Geral','Quartos','Cozinhas','Casas de Banho','Salas','Corredores','Garagens','Telhados','Zonas Exteriores','Paredes Exteriores','Varandas','Terraços'],
+ caps:['Demolições','Eletricidade','Pichelaria','Pladur','Revestimentos / Pavimentos','Alvenaria','Pintura','Carpintaria','Caixilharia','Fornecimentos'],
+ textos:TEXTOS0,
+ precos:[
+  ['Material','Cimento 25 kg','UN',5.2,'Alvenaria'],['Material','Tijolo 11 cm (palete)','UN',310,'Alvenaria'],['Material','Cola cimento cinza 25 kg','UN',9.5,'Revestimentos / Pavimentos'],['Material','Azulejo 60x60','M2',22,'Revestimentos / Pavimentos'],['Material','Cabo elétrico 2,5 mm (rolo)','UN',64,'Eletricidade'],['Material','Tubo multicamada 20 mm','ML',2.8,'Pichelaria'],['Material','Tinta plástica 15 L','UN',58,'Pintura'],['Material','Placa de gesso cartonado 12,5 mm','M2',6.4,'Pladur'],
+  ['Mão-de-obra','Eletricista','DIA',110,'Eletricidade'],['Mão-de-obra','Canalizador','DIA',100,'Pichelaria'],['Mão-de-obra','Pedreiro','DIA',130,'Alvenaria'],['Mão-de-obra','Pintor','DIA',90,'Pintura'],['Mão-de-obra','Ladrilhador','DIA',120,'Revestimentos / Pavimentos'],['Mão-de-obra','Servente','DIA',80,'']
+ ].map((a,i)=>({id:'p'+(i+1),tipo:a[0],nome:a[1],un:a[2],preco:a[3],cap:a[4]}))
+};
+const TIT_PAG=[['Adjudicação',.5],['A meio da obra',.4],['Entrega / fecho',.1]];
+const NOTAS0='O presente mapa de trabalhos e quantidades foi elaborado com base na planta fornecida pelo cliente e na visita ao local.\nTodas as medidas deverão ser verificadas e retificadas em obra.\nValores não incluem IVA à taxa legal em vigor.';
+const mesAno=()=>{const m=new Date().toLocaleDateString('pt-PT',{month:'long'});return m.charAt(0).toUpperCase()+m.slice(1)+' | '+new Date().getFullYear()};
+function newOrc(base,ob){return {id:uid(),nome:ob?ob.cliente:'Novo orçamento',versao:1,obra:ob?ob.id:0,morada:ob?ob.morada:'',descricao:'',data:mesAno(),cat:'A',iva:23,pagamentos:TIT_PAG.map(p=>({id:uid(),txt:p[0],pct:p[1]})),notas:NOTAS0,caps:base.caps.map(n=>({id:uid(),nome:n,itens:[]}))}}
+function ORC0(){
+ const T=(c)=>TEXTOS0.find(t=>t.cod===c);
+ const it=(id,cod,esp,mat,mo,sub,qt)=>{const t=T(cod);return {id,espaco:esp||t.tipo||'Geral',descr:t.descr,un:t.un,qt:qt||t.qt||1,mat,mo,sub:!!sub,rman:''}};
+ const caps=BASE0.caps.map((n,i)=>({id:'c'+(i+1),nome:n,itens:[]}));
+ const put=(n,arr)=>{caps.find(c=>c.nome===n).itens=arr};
+ put('Demolições',[it('i-dem','000','Geral',1400,5000,false)]);
+ put('Eletricidade',[it('i-ele','034','Geral',4000,5400,true)]);
+ put('Pladur',[it('i-pla1','003','Geral',2400,2900,false),it('i-pla2','005','Geral',2800,3300,false)]);
+ put('Revestimentos / Pavimentos',[it('i-rev1','007','Casas de Banho',3300,2500,false),it('i-rev2','008','Casas de Banho',4300,3300,false)]);
+ put('Alvenaria',[it('i-alv','001','Casas de Banho',2200,3600,false)]);
+ put('Pintura',[it('i-pin','011','Geral',1700,3100,false)]);
+ put('Fornecimentos',[it('i-san','013','Casas de Banho',490,0,false,2)]);
+ return [{id:'o1',nome:'Família Silva — remodelação completa',versao:1,obra:1,morada:'Rua das Flores 24, Porto',descricao:'Remodelação integral de apartamento T3: demolições, instalações, acabamentos e fornecimento de sanitários.',data:'Novembro | 2026',cat:'A',iva:6,pagamentos:TIT_PAG.map((p,i)=>({id:'pg'+i,txt:p[0],pct:p[1]})),notas:NOTAS0,caps}];
+}
+const SAMPLE_ATT={kind:'data',name:'fatura-exemplo.svg',type:'image/svg+xml',url:'data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 460"><rect width="360" height="460" fill="#fff"/><rect width="360" height="56" fill="#1d4ed8"/><text x="20" y="35" font-family="Arial" font-size="19" fill="#fff">Cimentos do Norte (exemplo)</text><g font-family="Arial" font-size="14" fill="#111"><text x="20" y="96">FATURA FT 2026/102</text><text x="20" y="126" fill="#555">Tijolo 11 cm (palete)</text><text x="20" y="152">Qtd.: 6      Preço: 310,00 €</text><text x="20" y="178">Líquido: 1.860,00 €</text><text x="20" y="204">IVA 23%:  427,80 €</text><text x="20" y="240" font-size="17" font-weight="bold">TOTAL: 2.287,80 €</text></g><text x="20" y="420" font-family="Arial" font-size="12" fill="#888">Documento de exemplo para testar o botão de anexo.</text></svg>')};
+MAT0[1].anexo=SAMPLE_ATT;MAT0[0].item='i-alv';MAT0[1].item='i-alv';MO0[0].item='i-ele';MO0[4].item='i-alv';
+
+/* ---- cálculo (igual ao Excel: TRABALHOS PROPOSTOS) ---- */
+const parOf=(base,cat)=>(base.params&&base.params[cat])||{mat:0,mo:0,mm:0,ind:0,buf:0,forn:0,sub:0};
+function calcItem(it,P){
+ const D=num(it.mat),H=num(it.mo),qt=num(it.qt),sub=!!it.sub;
+ const E=(H===0||sub)?P.forn:P.mat,F=D+D*E;
+ const J=sub?P.sub:P.mo,K=H+H*J;
+ const L=(D===0||H===0)?0:D+H,N=P.mm*L;
+ const sb=F+K+N,Pp=sb+P.ind*sb,Ra=Pp+P.buf*Pp;
+ const man=it.rman!==''&&it.rman!=null&&!isNaN(+it.rman);
+ const R=man?+it.rman:Ra,S=R-(D+H),T=(D+H)?S/(D+H):0;
+ return {D,H,E,F,J,K,L,N,sb,Pp,Ra,R,S,T,man,qt,ind:Pp-sb,buf:Ra-Pp,Y:qt*R,custo:qt*(D+H),mat:qt*D,mo:qt*H};
+}
+function orcCalc(orc,base){
+ const P=parOf(base,orc.cat);
+ const caps=orc.caps.map(c=>{const its=c.itens.map(i=>({i,c:calcItem(i,P)}));const s=f=>its.reduce((a,x)=>a+f(x),0);return {c,its,total:s(x=>x.c.Y),custo:s(x=>x.c.custo),mat:s(x=>x.c.mat),mo:s(x=>x.c.mo)}});
+ const s=f=>caps.reduce((a,x)=>a+f(x),0);
+ const tot=s(x=>x.total),custo=s(x=>x.custo),iva=tot*num(orc.iva)/100;
+ return {P,caps,tot,iva,totIva:tot+iva,mat:s(x=>x.mat),mo:s(x=>x.mo),custo,marg:tot-custo,margP:custo?(tot-custo)/custo:0};
+}
+const orcForObra=(orcs,id)=>orcs.filter(o=>o.obra===id).sort((a,b)=>b.versao-a.versao)[0];
+const itemOpts=(orcs,obraId)=>{const o=orcForObra(orcs,obraId);if(!o)return [];return o.caps.flatMap((c,ci)=>c.itens.map((i,ii)=>({id:i.id,label:(ci+1)+'.'+(ii+1)+' · '+(i.descr||'Sem descrição').slice(0,48)})))};
+function ItemSel({v,onChange,orcs,obra}){const op=itemOpts(orcs,obra);return html`<select className="inp" value=${v||''} disabled=${!op.length} onChange=${e=>onChange(e.target.value)}><option value="">${op.length?'— Sem ligação —':'Obra sem orçamento'}</option>${op.map(o=>html`<option key=${o.id} value=${o.id}>${o.label}</option>`)}</select>`}
+
+/* ---- anexos (foto / PDF da fatura) ---- */
+const IDB=(()=>{let p;const open=()=>p||(p=new Promise((res,rej)=>{try{const r=indexedDB.open('gestao-anexos',1);r.onupgradeneeded=()=>r.result.createObjectStore('f');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}catch(e){rej(e)}}));
+ const run=(mode,fn)=>open().then(d=>new Promise((res,rej)=>{const t=d.transaction('f',mode);const r=fn(t.objectStore('f'));t.oncomplete=()=>res(r&&r.result);t.onerror=()=>rej(t.error)}));
+ return {put:(k,b)=>run('readwrite',s=>s.put(b,k)),get:k=>run('readonly',s=>s.get(k)),del:k=>run('readwrite',s=>s.delete(k))}})();
+async function saveAtt(file){
+ if(window.Cloud&&window.Cloud.ready){return await window.Cloud.upload(file)}
+ try{const A=window.claude&&window.claude.use?await window.claude.use('assets'):null;if(A){const r=await A.upload(file);return {kind:'asset',id:r.id,url:r.url,name:file.name,type:file.type,size:file.size}}}catch(e){}
+ const id='a'+Date.now()+Math.random().toString(36).slice(2,6);await IDB.put(id,file);return {kind:'idb',id,name:file.name,type:file.type,size:file.size};
+}
+async function attUrl(a){if(a.kind==='sb')return await window.Cloud.url(a);if(a.kind==='idb'){const b=await IDB.get(a.id);return b?URL.createObjectURL(b):null}return a.url}
+async function delAtt(a){try{if(a.kind==='sb'){await window.Cloud.remove(a);return}if(a.kind==='idb')await IDB.del(a.id);else if(a.kind==='asset'){const A=await window.claude.use('assets');if(A)await A.delete(a.id)}}catch(e){}}
+function AttViewer({a,close,replace,remove}){
+ const [url,setUrl]=useState(null);const [bad,setBad]=useState(false);
+ useEffect(()=>{let u,dead=false;(async()=>{try{u=await attUrl(a);if(!dead){u?setUrl(u):setBad(true)}}catch(e){setBad(true)}})();return()=>{dead=true;if(u&&a.kind==='idb')URL.revokeObjectURL(u)}},[a.id,a.url]);
+ const pdf=/pdf/i.test(a.type||'')||/\.pdf$/i.test(a.name||'');
+ return html`<${Modal} close=${close} wide=${860}>
+  <div className="flex items-start justify-between gap-3 mb-3"><div className="min-w-0"><h3 className="font-bold">Fatura original</h3><div className="text-xs mut break-words">${a.name}${a.size?' · '+Math.round(a.size/1024)+' KB':''}</div></div><button className="text-2xl px-2" onClick=${close} aria-label="Fechar">×</button></div>
+  ${bad&&html`<div className="text-sm mut py-8 text-center">Este ficheiro só existe no dispositivo onde foi anexado e não foi encontrado aqui.</div>`}
+  ${url&&!pdf&&html`<img src=${url} alt="Fatura original" className="w-full" style=${{maxHeight:'66vh',objectFit:'contain',background:'var(--inp)',borderRadius:8}}/>`}
+  ${url&&pdf&&html`<div className="text-center py-10"><div className="text-5xl mb-2">PDF</div><div className="text-sm mut mb-4 break-words">${a.name}</div><a className="btn inline-block" href=${url} target="_blank" rel="noopener noreferrer">Abrir PDF</a></div>`}
+  <div className="flex flex-wrap gap-2 justify-between mt-4">
+   <div className="flex gap-2 flex-wrap">${url&&!pdf&&html`<a className="btn2 inline-block" href=${url} target="_blank" rel="noopener noreferrer">Abrir noutro separador</a>`}<button className="btn2" onClick=${replace}>Substituir</button></div>
+   <${ConfDel} t="Remover anexo" on=${remove}/></div>
+ <//>`}
+function AttBtn({m,upd,cfg,label}){
+ const [view,setView]=useState(false);const [busy,setBusy]=useState(false);const [err,setErr]=useState('');const ref=useRef(null);
+ const pick=async f=>{if(!f)return;setBusy(true);setErr('');try{const old=m.anexo;const a=await saveAtt(f);upd(m.id,{anexo:a});if(old&&old.kind!=='data')delAtt(old)}catch(e){setErr('Não foi possível guardar o ficheiro.')}setBusy(false)};
+ return html`<span className="inline-flex items-center gap-2">
+  <input ref=${ref} type="file" accept="image/*,application/pdf" hidden onChange=${e=>{pick(e.target.files[0]);e.target.value=''}}/>
+  ${m.anexo?html`<button title="Ver fatura original" aria-label="Ver fatura original" className="p-1.5 rounded-lg inline-flex items-center gap-1.5" style=${{color:cfg.azul,border:'1px solid var(--bd)'}} onClick=${()=>setView(true)}><${Ic} d=${IC.eye} s=${18}/>${label&&html`<span className="text-sm font-semibold">Ver original</span>`}</button>`
+   :html`<button title="Anexar foto ou PDF" aria-label="Anexar foto ou PDF" className="p-1.5 rounded-lg mut inline-flex items-center gap-1.5" style=${{border:'1px dashed var(--bd)'}} onClick=${()=>ref.current&&ref.current.click()}><${Ic} d=${IC.clip} s=${18}/>${label&&html`<span className="text-sm font-semibold">Anexar foto / PDF</span>`}</button>`}
+  ${busy&&html`<span className="text-xs mut">A guardar…</span>`}${err&&html`<span className="text-xs">${err}</span>`}
+  ${view&&m.anexo&&html`<${AttViewer} a=${m.anexo} close=${()=>setView(false)} replace=${()=>ref.current&&ref.current.click()} remove=${()=>{delAtt(m.anexo);upd(m.id,{anexo:null});setView(false)}}/>`}
+ </span>`}
+
+/* ---- faturas: tabela (PC) + cartões (telemóvel) ---- */
+const netM=m=>(m.qtd||0)*(m.preco||0);
+const patchLiq=(m,v)=>{const q=m.qtd||1;return {qtd:q,preco:v/q}};
+const patchTot=(m,v)=>{const q=m.qtd||1;return {qtd:q,preco:(v/(1+(m.iva||0)/100))/q}};
+const patchIva=(m,v)=>{const n=netM(m);return {iva:n?v/n*100:m.iva}};
+function FatDetail({m,obras,upd,del,dup,showObra,orcs,mobile,cfg}){
+ const T=(k)=>html`<input className="inp" value=${m[k]==null?'':m[k]} onChange=${e=>upd(m.id,k,e.target.value)}/>`;
+ return html`<div>
+  ${m.lido&&html`<div className="text-xs font-semibold mb-2" style=${{color:'var(--blue)'}}>${m.lido==='auto'?'Valores lidos da fatura. Confirma antes de guardar.':'Fatura anexada. Preenche os valores a partir do original.'} <button className="underline" onClick=${()=>upd(m.id,'lido','')}>Confirmar</button></div>`}
+  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+   ${mobile&&html`<${F2} l="Data"><input className="inp" type="date" value=${m.data||''} onChange=${e=>upd(m.id,'data',e.target.value)}/><//>`}
+   ${mobile&&html`<${F2} l="Fornecedor">${T('forn')}<//>`}
+   ${mobile&&html`<${F2} l="Valor líquido (€)"><${NumIn} v=${netM(m)} on=${v=>upd(m.id,patchLiq(m,v))}/><//>`}
+   ${mobile&&html`<${F2} l="IVA (€)"><${NumIn} v=${netM(m)*m.iva/100} on=${v=>upd(m.id,patchIva(m,v))}/><//>`}
+   ${mobile&&html`<${F2} l="Total (€)"><${NumIn} v=${matTot(m)} on=${v=>upd(m.id,patchTot(m,v))}/><//>`}
+   <${F2} l="Nº fatura">${T('nf')}<//>
+   <div className="col-span-2"><${F2} l="Artigo / descrição">${T('artigo')}<//></div>
+   <${F2} l="Categoria"><select className="inp" value=${m.cat} onChange=${e=>upd(m.id,'cat',e.target.value)}>${CATS.map(c=>html`<option key=${c}>${c}</option>`)}</select><//>
+   ${showObra&&html`<${F2} l="Obra"><${ObraSel} v=${m.obra||''} obras=${obras} onChange=${v=>upd(m.id,{obra:v,item:''})}/><//>`}
+   <${F2} l="Item do orçamento"><${ItemSel} v=${m.item} orcs=${orcs} obra=${m.obra} onChange=${v=>upd(m.id,'item',v)}/><//>
+   <${F2} l="Quantidade"><${NumIn} v=${m.qtd} on=${v=>upd(m.id,'qtd',v)}/><//>
+   <${F2} l="Preço unit. (€)"><${NumIn} v=${m.preco} on=${v=>upd(m.id,'preco',v)}/><//>
+   <${F2} l="IVA (%)"><${NumIn} v=${m.iva} on=${v=>upd(m.id,'iva',v)}/><//>
+   ${mobile&&html`<${F2} l="Estado"><select className="inp" value=${m.pago?'1':'0'} onChange=${e=>upd(m.id,'pago',e.target.value==='1')}><option value="1">Pago</option><option value="0">Pendente</option></select><//>`}
+  </div>
+  <div className="flex flex-wrap items-center justify-between gap-2 mt-3">
+   <div className="flex items-center gap-3 flex-wrap">${mobile&&html`<${AttBtn} m=${m} upd=${upd} cfg=${cfg} label=${true}/>`}<span className="text-sm mut">Líquido <b style=${{color:'var(--fg)'}}>${eur(netM(m))}</b> · IVA <b style=${{color:'var(--fg)'}}>${eur(netM(m)*m.iva/100)}</b> · Total <b style=${{color:'var(--fg)'}}>${eur(matTot(m))}</b></span></div>
+   <div className="flex gap-2"><${IB} ic="copy" t="Duplicar" on=${()=>dup(m)}/><${ConfDel} t="Apagar" on=${()=>del(m.id)}/></div>
+  </div></div>`}
+function FatRow(p){
+ const {m,obras,cfg,showObra}=p;
+ const [open,setOpen]=useState(()=>NEWIDS.has(m.id));
+ const ob=(obras.find(o=>o.id===m.obra)||{}).cliente;
+ return html`<div className="card" style=${{padding:0}}>
+  <button className="w-full text-left flex items-center gap-3" style=${{padding:'12px 14px'}} onClick=${()=>setOpen(!open)}>
+   <div className="flex-1 min-w-0"><div className="font-semibold">${m.forn||'Sem fornecedor'}</div><div className="text-xs mut">${m.artigo}${m.data?' · '+fdate(m.data):''}${showObra&&ob?' · '+ob:''}</div></div>
+   ${m.lido&&html`<span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full" style=${{border:'1px solid '+cfg.azul,color:cfg.azul}}>${m.lido==='auto'?'Lida':'Por preencher'}</span>`}
+   ${m.anexo&&html`<span style=${{color:cfg.azul}} title="Tem anexo"><${Ic} d=${IC.clip} s=${16}/></span>`}
+   <div className="text-right"><div className="font-bold">${eur(matTot(m))}</div><div className="text-xs font-semibold" style=${{color:m.pago?cfg.azul:'var(--neg)'}}>${m.pago?'Pago':'Pendente'}</div></div>
+   <span className="mut">${open?'▴':'▾'}</span></button>
+  ${open&&html`<div style=${{padding:'12px 14px 14px',borderTop:'1px solid var(--bd)'}}><${FatDetail} ...${p} mobile=${true}/></div>`}</div>`}
+function FatTable({rows,obras,upd,del,dup,cfg,showObra,orcs}){
+ const [ex,setEx]=useState({});
+ const cols=showObra?9:8;
+ return html`<div className="overflow-x-auto"><table className="w-full" style=${{minWidth:showObra?1040:900,borderCollapse:'collapse'}}>
+  <thead><tr><th className="th">Data</th><th className="th">Fornecedor</th>${showObra&&html`<th className="th">Obra</th>`}<th className="th">Valor líquido</th><th className="th">IVA</th><th className="th">Total</th><th className="th">Estado</th><th className="th" style=${{textAlign:'center'}}>Anexo</th><th className="th"></th></tr></thead>
+  <tbody>${rows.map(m=>{const open=ex[m.id]!==undefined?ex[m.id]:NEWIDS.has(m.id);return html`<${React.Fragment} key=${m.id}>
+   <tr>
+    <td className="td" style=${{width:140}}><input className="inp" type="date" value=${m.data||''} onChange=${e=>upd(m.id,'data',e.target.value)}/></td>
+    <td className="td" style=${{minWidth:150}}><input className="inp" value=${m.forn||''} placeholder="Fornecedor" onChange=${e=>upd(m.id,'forn',e.target.value)}/></td>
+    ${showObra&&html`<td className="td" style=${{minWidth:150}}><${ObraSel} v=${m.obra||''} obras=${obras} onChange=${v=>upd(m.id,{obra:v,item:''})}/></td>`}
+    <td className="td" style=${{width:112}}><${NumIn} v=${netM(m)} on=${v=>upd(m.id,patchLiq(m,v))}/></td>
+    <td className="td" style=${{width:96}}><${NumIn} v=${netM(m)*m.iva/100} on=${v=>upd(m.id,patchIva(m,v))}/><div className="text-[10px] mut mt-0.5">${(+m.iva||0).toLocaleString('pt-PT',{maximumFractionDigits:2})}%</div></td>
+    <td className="td" style=${{width:116}}><${NumIn} v=${matTot(m)} on=${v=>upd(m.id,patchTot(m,v))}/></td>
+    <td className="td" style=${{width:132}}><select className="inp" style=${{fontWeight:600,color:m.pago?cfg.azul:'var(--fg)'}} value=${m.pago?'1':'0'} onChange=${e=>upd(m.id,'pago',e.target.value==='1')}><option value="1">Pago</option><option value="0">Pendente</option></select></td>
+    <td className="td" style=${{textAlign:'center',width:70}}><${AttBtn} m=${m} upd=${upd} cfg=${cfg}/></td>
+    <td className="td" style=${{width:40}}><button className="px-2 mut" aria-label=${open?'Fechar detalhes':'Abrir detalhes'} onClick=${()=>setEx({...ex,[m.id]:!open})}>${open?'▴':'▾'}</button></td>
+   </tr>
+   ${open&&html`<tr><td colSpan=${cols} className="td" style=${{background:'var(--inp)',padding:'14px'}}><${FatDetail} m=${m} obras=${obras} upd=${upd} del=${del} dup=${dup} showObra=${false} orcs=${orcs} cfg=${cfg}/></td></tr>`}
+  <//>`})}</tbody></table></div>`}
+function FatList(p){return html`<div><div className="hidden md:block"><${FatTable} ...${p}/></div><div className="md:hidden space-y-2">${p.rows.map(m=>html`<${FatRow} key=${m.id} ...${p} m=${m}/>`)}</div></div>`}
+
+/* ---- seletores de textos / preços pré-definidos ---- */
+function TextPicker({base,onPick,close}){
+ const [q,setQ]=useState('');const [f,setF]=useState('');
+ const list=base.textos.filter(t=>((t.cod||'')+' '+(t.tipo||'')+' '+(t.cap||'')+' '+t.descr).toLowerCase().includes(q.toLowerCase())&&(!f||t.cap===f));
+ return html`<${Modal} close=${close} wide=${760}>
+  <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-lg">Textos pré-definidos</h3><button className="text-2xl px-2" onClick=${close} aria-label="Fechar">×</button></div>
+  <div className="flex flex-wrap gap-2 mb-3"><input className="inp" style=${{flex:'1 1 200px'}} placeholder="Pesquisar texto, código ou espaço…" value=${q} onChange=${e=>setQ(e.target.value)}/>
+   <select className="inp" style=${{flex:'1 1 170px'}} value=${f} onChange=${e=>setF(e.target.value)}><option value="">Todos os capítulos</option>${base.caps.map(c=>html`<option key=${c}>${c}</option>`)}</select></div>
+  <div className="space-y-2">${list.map(t=>html`<button key=${t.id} className="w-full text-left card" style=${{padding:'10px 12px'}} onClick=${()=>{onPick(t);close()}}>
+   <div className="text-[11px] uppercase tracking-wider mut">${t.cod?t.cod+' · ':''}${t.tipo||'Geral'}${t.cap?' · '+t.cap:''} · ${t.qt||1} ${t.un}</div>
+   <div className="text-sm mt-1 line-clamp-3">${t.descr}</div></button>`)}</div>
+  ${!list.length&&html`<div className="text-sm mut text-center py-6">Nenhum texto encontrado. Podes criar textos na aba Base de dados.</div>`}
+ <//>`}
+function PricePicker({base,tipo,onPick,close}){
+ const [q,setQ]=useState('');const [f,setF]=useState(tipo||'');
+ const list=base.precos.filter(p=>(p.nome+' '+(p.cap||'')).toLowerCase().includes(q.toLowerCase())&&(!f||p.tipo===f));
+ return html`<${Modal} close=${close} wide=${640}>
+  <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-lg">Tabela de preços</h3><button className="text-2xl px-2" onClick=${close} aria-label="Fechar">×</button></div>
+  <div className="flex flex-wrap gap-2 mb-3"><input className="inp" style=${{flex:'1 1 180px'}} placeholder="Pesquisar…" value=${q} onChange=${e=>setQ(e.target.value)}/>
+   <div className="flex gap-1">${[['','Todos'],['Material','Materiais'],['Mão-de-obra','Mão-de-obra']].map(a=>html`<button key=${a[0]} onClick=${()=>setF(a[0])} className="px-3 py-1.5 rounded-full text-xs font-semibold" style=${{background:f===a[0]?'var(--blue)':'var(--card)',color:f===a[0]?'#fff':'var(--fg)',border:'1px solid var(--bd)'}}>${a[1]}</button>`)}</div></div>
+  <div className="space-y-2">${list.map(p=>html`<div key=${p.id} className="card flex items-center gap-3" style=${{padding:'10px 12px'}}>
+   <div className="flex-1 min-w-0"><div className="font-semibold text-sm">${p.nome}</div><div className="text-xs mut">${p.tipo}${p.cap?' · '+p.cap:''}</div></div>
+   <div className="text-right text-sm"><b>${eur(p.preco)}</b><div className="text-xs mut">/ ${p.un}</div></div>
+   <div className="flex flex-col gap-1"><button className="btn" style=${{padding:'4px 10px',fontSize:12}} onClick=${()=>{onPick(p.preco,false);close()}}>Usar</button><${IB} ic="plus" t="Somar ao valor atual" on=${()=>{onPick(p.preco,true);close()}}/></div></div>`)}</div>
+  ${!list.length&&html`<div className="text-sm mut text-center py-6">Nenhum preço encontrado. Podes criar preços na aba Base de dados.</div>`}
+ <//>`}
+
+/* ---- orçamento: linha (item) ---- */
+const NEWOI=new Set();
+function OrcItem({it,n,P,base,setBase,upd,del,dup,mv,cfg}){
+ const [x,setX]=useState(()=>NEWOI.has(it.id));const [pk,setPk]=useState(null);
+ const c=calcItem(it,P);const set=(k,v)=>upd(it.id,typeof k==='object'?k:{[k]:v});
+ const unOpts=base.unidades.map(u=>u[0]);if(it.un&&!unOpts.includes(it.un))unOpts.push(it.un);
+ const esp=base.espacos.slice();if(it.espaco&&!esp.includes(it.espaco))esp.push(it.espaco);
+ const saveTxt=()=>setBase({...base,textos:[{id:uid(),cod:'',tipo:it.espaco||'Geral',cap:'',descr:it.descr,un:it.un||'VG',qt:it.qt||1,mat:it.mat||0,mo:it.mo||0,sub:!!it.sub},...base.textos]});
+ const [saved,setSaved]=useState(false);
+ const Cell=(l,v,s)=>html`<div key=${l} className="py-1.5" style=${{borderBottom:'1px solid var(--bd)'}}><div className="flex justify-between gap-3 text-sm"><span className="mut">${l}</span><b>${v}</b></div>${s&&html`<div className="text-[11px] mut text-right">${s}</div>`}</div>`;
+ return html`<div className="card" style=${{padding:0}}>
+  <button className="w-full text-left flex items-start gap-3" style=${{padding:'12px 14px'}} onClick=${()=>setX(!x)}>
+   <span className="text-xs font-bold mut shrink-0 pt-0.5" style=${{minWidth:30}}>${n}</span>
+   <div className="flex-1 min-w-0"><div className="text-sm line-clamp-2">${it.descr||'Sem descrição'}</div><div className="text-xs mut mt-0.5">${it.espaco||'Geral'} · ${num(it.qt)} ${it.un}${it.sub?' · subcontratado':''}</div></div>
+   <div className="text-right shrink-0"><div className="font-bold">${eur(c.Y)}</div><div className="text-xs mut">margem ${pf(c.T)}</div></div></button>
+  ${x&&html`<div style=${{padding:'12px 14px 14px',borderTop:'1px solid var(--bd)'}}>
+   <div className="flex flex-wrap gap-2 mb-3"><button className="btn2" onClick=${()=>setPk('texto')}>Texto pré-definido</button><button className="btn2" onClick=${()=>{saveTxt();setSaved(true);setTimeout(()=>setSaved(false),1800)}}>${saved?'Guardado ✓':'Guardar na base de dados'}</button></div>
+   <${F2} l="Descrição do trabalho"><textarea className="inp" rows="4" value=${it.descr} onChange=${e=>set('descr',e.target.value)}></textarea><//>
+   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+    <${F2} l="Espaço"><select className="inp" value=${it.espaco||''} onChange=${e=>set('espaco',e.target.value)}>${esp.map(s=>html`<option key=${s}>${s}</option>`)}</select><//>
+    <${F2} l="Unidade"><select className="inp" value=${it.un} onChange=${e=>set('un',e.target.value)}>${unOpts.map(s=>html`<option key=${s}>${s}</option>`)}</select><//>
+    <${F2} l="Quantidade"><${NumIn} v=${it.qt} on=${v=>set('qt',v)}/><//>
+    <${F2} l="Subcontratada"><label className="flex items-center gap-2 text-sm" style=${{minHeight:34}}><input type="checkbox" checked=${!!it.sub} onChange=${e=>set('sub',e.target.checked)}/>Sim (X)</label><//>
+   </div>
+   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+    <${F2} l="Custo do material (€ por unidade)"><div className="flex gap-1"><${NumIn} v=${it.mat} on=${v=>set('mat',v)}/><button className="btn2" style=${{padding:'0 12px',whiteSpace:'nowrap'}} onClick=${()=>setPk('mat')}>Tabela</button></div><//>
+    <${F2} l="Custo da mão-de-obra (€ por unidade)"><div className="flex gap-1"><${NumIn} v=${it.mo} on=${v=>set('mo',v)}/><button className="btn2" style=${{padding:'0 12px',whiteSpace:'nowrap'}} onClick=${()=>setPk('mo')}>Tabela</button></div><//>
+   </div>
+   <div className="mt-4 p-3 rounded-xl" style=${{background:'var(--inp)',border:'1px solid var(--bd)'}}>
+    <div className="text-[11px] uppercase tracking-widest mut font-semibold mb-1">Cálculo automático por unidade</div>
+    ${Cell('Custo (material + mão-de-obra)',eur(c.D+c.H))}
+    ${Cell('Material com margem',eur(c.F),'+'+pf(c.E)+(c.H===0?' (só fornecimento)':it.sub?' (subcontratada)':''))}
+    ${Cell('Mão-de-obra com margem',eur(c.K),'+'+pf(c.J)+(it.sub?' (subcontratada)':''))}
+    ${Cell('Margem material + mão-de-obra',eur(c.N),c.L?pf(P.mm)+' sobre o custo conjunto':'só se houver material e mão-de-obra')}
+    ${Cell('Custos indiretos',eur(c.ind),pf(P.ind))}
+    ${Cell('Buffer',eur(c.buf),pf(P.buf))}
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3 items-end">
+     <${F2} l=${c.man?'Preço unitário de venda (manual)':'Preço unitário de venda (automático)'}><div className="flex gap-1"><${NumIn} v=${c.R} blank=${true} on=${v=>set('rman',v)}/>${c.man&&html`<button className="btn2" style=${{padding:'0 12px',whiteSpace:'nowrap'}} onClick=${()=>set('rman','')}>Repor</button>`}</div><//>
+     <div className="text-sm text-right md:pb-2"><div className="mut">Margem <b style=${{color:'var(--fg)'}}>${eur(c.S)} · ${pf(c.T)}</b></div><div className="font-extrabold text-lg">Total da linha ${eur(c.Y)}</div></div></div>
+   </div>
+   <div className="flex flex-wrap gap-2 justify-between mt-3"><div className="flex gap-2"><${IB} ic="up" t="Subir" on=${()=>mv(-1)}/><${IB} ic="down" t="Descer" on=${()=>mv(1)}/><${IB} ic="copy" t="Duplicar" on=${dup}/></div><${ConfDel} t="Apagar linha" on=${del}/></div>
+  </div>`}
+  ${pk==='texto'&&html`<${TextPicker} base=${base} close=${()=>setPk(null)} onPick=${t=>{const p={descr:t.descr,un:t.un||it.un,qt:t.qt||it.qt};if(t.tipo)p.espaco=t.tipo;if(num(t.mat))p.mat=t.mat;if(num(t.mo))p.mo=t.mo;if(t.sub)p.sub=true;set(p)}}/>`}
+  ${(pk==='mat'||pk==='mo')&&html`<${PricePicker} base=${base} tipo=${pk==='mat'?'Material':'Mão-de-obra'} close=${()=>setPk(null)} onPick=${(v,add)=>set(pk,add?num(it[pk])+v:v)}/>`}
+ </div>`}
+
+/* ---- orçamento: página completa ---- */
+function OrcPage({orc,orcs,setOrcs,obras,setObras,base,setBase,cfg,back,openOrc,goBase}){
+ const [open,setOpen]=useState({});const [pickCap,setPickCap]=useState(null);const [newCap,setNewCap]=useState('');const [conf,setConf]=useState(false);const [view,setView]=useState(false);const [pmsg,setPmsg]=useState('');
+ const R=orcCalc(orc,base);const P=R.P;
+ const setOrc=o=>setOrcs(orcs.map(x=>x.id===o.id?o:x));
+ const f=(k,v)=>setOrc({...orc,[k]:v});
+ const mapCap=(cid,fn)=>setOrc({...orc,caps:orc.caps.map(c=>c.id===cid?fn(c):c)});
+ const swap=(a,i,d)=>{const j=i+d;if(j<0||j>=a.length)return a;const b=a.slice();[b[i],b[j]]=[b[j],b[i]];return b};
+ const addItem=(cid,t)=>{const id=uid();NEWOI.add(id);const it={id,espaco:(t&&t.tipo)||'Geral',descr:t?t.descr:'',un:t?t.un:'VG',qt:t?(t.qt||1):1,mat:t?num(t.mat):0,mo:t?num(t.mo):0,sub:t?!!t.sub:false,rman:''};mapCap(cid,c=>({...c,itens:[it,...c.itens]}));setOpen({...open,[cid]:true})};
+ const addCap=()=>{const n=newCap.trim();if(!n)return;const id=uid();setOrc({...orc,caps:[{id,nome:n,itens:[]},...orc.caps]});setOpen({...open,[id]:true});setNewCap('')};
+ const pgSum=orc.pagamentos.reduce((s,p)=>s+num(p.pct),0);
+ const novaVersao=()=>{const mx=Math.max(...orcs.filter(o=>o.nome===orc.nome&&o.obra===orc.obra).map(o=>o.versao),orc.versao);const c={...JSON.parse(JSON.stringify(orc)),id:uid(),versao:mx+1,data:mesAno()};setOrcs([c,...orcs]);openOrc(c.id)};
+ const apagar=()=>{setOrcs(orcs.filter(o=>o.id!==orc.id));back()};
+ const usarTotal=()=>setObras(obras.map(o=>o.id===orc.obra?{...o,orc:Math.round(R.tot*100)/100}:o));
+ const obraAtual=obras.find(o=>o.id===orc.obra);
+ const gerarPdf=async()=>{setPmsg('A gerar PDF…');setPmsg(await exportPdf(orc,base,obraAtual,cfg))};
+ return html`<div className="space-y-4">
+  ${view&&html`<${OrcDoc} orc=${orc} base=${base} obra=${obraAtual} cfg=${cfg} close=${()=>setView(false)} onPdf=${gerarPdf} msg=${pmsg}/>`}
+  <div className="flex flex-wrap items-center justify-between gap-2"><button className="btn2" onClick=${back}>← Todos os orçamentos</button>
+   <div className="flex gap-2 flex-wrap"><${IB} ic="dl" t="Transferir Orçamento em PDF" pri=${true} txt="PDF" on=${gerarPdf}/><${IB} ic="eye" t="Vista de impressão" on=${()=>{setPmsg('');setView(true)}}/><${IB} ic="branch" t="Nova versão" on=${novaVersao}/><${ConfDel} t="Apagar orçamento" on=${apagar}/></div></div>
+
+  ${pmsg&&!view&&html`<div className="text-sm font-semibold" style=${{color:cfg.azul}}>${pmsg}</div>`}
+  <${Kp} items=${[['Total sem IVA',eur(R.tot),cfg.azul],['IVA ('+num(orc.iva)+'%)',eur(R.iva)],['Total com IVA',eur(R.totIva)],['Margem',html`<span>${eur(R.marg)} · ${pf(R.margP)}</span>`,null,'sobre o custo']]}/>
+
+  <${Card} st=${true}><h3 className="font-bold mb-3">Dados do orçamento</h3>
+   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+    <div className="col-span-2"><${F2} l="Nome / cliente"><input className="inp" value=${orc.nome} onChange=${e=>f('nome',e.target.value)}/><//></div>
+    <${F2} l="Versão"><${NumIn} v=${orc.versao} dec=${0} on=${v=>f('versao',v||1)}/><//>
+    <${F2} l="Mês | Ano"><input className="inp" value=${orc.data} onChange=${e=>f('data',e.target.value)}/><//>
+    <div className="col-span-2"><${F2} l="Obra associada"><${ObraSel} v=${orc.obra||''} obras=${obras} onChange=${v=>setOrc({...orc,obra:v,morada:v&&!orc.morada?(obras.find(o=>o.id===v)||{}).morada||'':orc.morada})}/><//></div>
+    <div className="col-span-2"><${F2} l="Morada"><input className="inp" value=${orc.morada} onChange=${e=>f('morada',e.target.value)}/><//></div>
+    <div className="col-span-2 md:col-span-4"><${F2} l="Descrição da obra"><textarea className="inp" rows="2" value=${orc.descricao} onChange=${e=>f('descricao',e.target.value)}></textarea><//></div>
+    <div className="col-span-2"><${F2} l="Categoria da obra (define as margens)"><select className="inp" value=${orc.cat} onChange=${e=>f('cat',e.target.value)}>${['A','B','C'].map(k=>html`<option key=${k} value=${k}>${k} · ${base.catDesc[k]}</option>`)}</select><//></div>
+    <div className="col-span-2"><${F2} l="Taxa de IVA (%)"><div className="flex gap-1 items-center"><${NumIn} v=${orc.iva} on=${v=>f('iva',v)}/>${[23,13,6,0].map(t=>html`<button key=${t} onClick=${()=>f('iva',t)} className="px-2.5 py-1.5 rounded-lg text-xs font-semibold" style=${{background:num(orc.iva)===t?'var(--blue)':'var(--card)',color:num(orc.iva)===t?'#fff':'var(--fg)',border:'1px solid var(--bd)'}}>${t}%</button>`)}</div><//></div>
+   </div>
+   <div className="text-xs mut mt-3">Categoria ${orc.cat}: materiais +${pf(P.mat)} (só fornecimento +${pf(P.forn)}), mão-de-obra +${pf(P.mo)} (subcontratada +${pf(P.sub)}), material+mão-de-obra +${pf(P.mm)}, indiretos +${pf(P.ind)}, buffer +${pf(P.buf)}. <button className="font-semibold" style=${{color:cfg.azul}} onClick=${goBase}>Editar percentagens →</button></div>
+   ${obraAtual&&html`<div className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-3 text-sm" style=${{borderTop:'1px solid var(--bd)'}}><span className="mut">Orçamento atual da obra ${obraAtual.cliente}: <b style=${{color:'var(--fg)'}}>${eur(obraAtual.orc)}</b></span><button className="btn2" onClick=${usarTotal}>Usar ${eur(R.tot)} como orçamento da obra</button></div>`}
+  <//>
+
+  <${Card} st=${true}><div className="flex flex-wrap items-center gap-2 mb-1"><h3 className="font-bold mr-2">Capítulos e trabalhos</h3><div className="flex-1"></div>
+    <input className="inp" style=${{flex:'1 1 160px',maxWidth:240}} placeholder="Novo capítulo…" value=${newCap} onChange=${e=>setNewCap(e.target.value)} onKeyDown=${e=>e.key==='Enter'&&addCap()}/><${IB} ic="plus" t="Novo capítulo" pri=${true} txt="Capítulo" on=${addCap}/></div>
+   <div className="text-xs mut mb-3">Os novos itens e capítulos entram no topo. Usa ↑ ↓ para os reordenar.</div>
+   <div className="space-y-2">${R.caps.map((cp,ci)=>{const c=cp.c,o=!!open[c.id];return html`<div key=${c.id} className="card" style=${{padding:0}}>
+    <button className="w-full text-left flex items-center gap-3" style=${{padding:'12px 14px'}} onClick=${()=>setOpen({...open,[c.id]:!o})}>
+     <span className="font-extrabold" style=${{minWidth:26,color:cfg.azul}}>${ci+1}</span><div className="flex-1 min-w-0"><div className="font-semibold">${c.nome}</div><div className="text-xs mut">${c.itens.length} ${c.itens.length===1?'trabalho':'trabalhos'}</div></div>
+     <div className="text-right"><div className="font-bold">${eur(cp.total)}</div></div><span className="mut">${o?'▴':'▾'}</span></button>
+    ${o&&html`<div style=${{padding:'12px 14px 14px',borderTop:'1px solid var(--bd)'}}>
+     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3"><${F2} l="Nome do capítulo"><input className="inp" value=${c.nome} onChange=${e=>mapCap(c.id,x=>({...x,nome:e.target.value}))}/><//>
+      <div className="flex flex-wrap gap-2 items-end md:justify-end"><${IB} ic="plus" t="Novo trabalho" pri=${true} txt="Trabalho" on=${()=>addItem(c.id)}/><${IB} ic="txt" t="Inserir texto pré-definido" txt="Texto" on=${()=>setPickCap(c.id)}/></div></div>
+     <div className="space-y-2">${c.itens.map((it,ii)=>html`<${OrcItem} key=${it.id} it=${it} n=${(ci+1)+'.'+(ii+1)} P=${P} base=${base} setBase=${setBase} cfg=${cfg}
+       upd=${(id,p)=>mapCap(c.id,x=>({...x,itens:x.itens.map(i=>i.id===id?{...i,...p}:i)}))}
+       del=${()=>mapCap(c.id,x=>({...x,itens:x.itens.filter(i=>i.id!==it.id)}))}
+       dup=${()=>{const nid=uid();NEWOI.add(nid);mapCap(c.id,x=>({...x,itens:[{...it,id:nid},...x.itens]}))}}
+       mv=${d=>mapCap(c.id,x=>({...x,itens:swap(x.itens,ii,d)}))}/>`)}</div>
+     ${!c.itens.length&&html`<div className="text-sm mut py-2">Ainda sem trabalhos neste capítulo.</div>`}
+     <div className="flex flex-wrap gap-2 justify-between mt-3"><div className="flex gap-2"><${IB} ic="up" t="Subir capítulo" on=${()=>setOrc({...orc,caps:swap(orc.caps,ci,-1)})}/><${IB} ic="down" t="Descer capítulo" on=${()=>setOrc({...orc,caps:swap(orc.caps,ci,1)})}/></div><${ConfDel} t="Apagar capítulo" on=${()=>setOrc({...orc,caps:orc.caps.filter(x=>x.id!==c.id)})}/></div>
+    </div>`}</div>`})}</div>
+   <div className="mt-4 pt-3 text-sm" style=${{borderTop:'1px solid var(--bd)'}}>
+    <div className="flex flex-wrap justify-end gap-x-6 gap-y-1"><span className="mut">Custo materiais <b style=${{color:'var(--fg)'}}>${eur(R.mat)}</b></span><span className="mut">Custo mão-de-obra <b style=${{color:'var(--fg)'}}>${eur(R.mo)}</b></span><span className="mut">Margem <b style=${{color:'var(--fg)'}}>${eur(R.marg)} · ${pf(R.margP)}</b></span></div>
+    <div className="text-right mt-2 mut">Total dos trabalhos propostos (sem IVA)</div><div className="text-right text-2xl font-extrabold tracking-tight">${eur(R.tot)}</div>
+    <div className="text-right mut">IVA ${num(orc.iva)}% ${eur(R.iva)} · <b style=${{color:'var(--fg)'}}>Total com IVA ${eur(R.totIva)}</b></div></div>
+  <//>
+
+  <${Card} st=${true}><div className="flex items-center justify-between mb-2"><h3 className="font-bold">Condições de pagamento</h3><${IB} ic="plus" t="Nova prestação" txt="Prestação" on=${()=>f('pagamentos',[{id:uid(),txt:'Nova prestação',pct:0},...orc.pagamentos])}/></div>
+   <div className="space-y-2">${orc.pagamentos.map(p=>html`<div key=${p.id} className="grid gap-2 items-center" style=${{gridTemplateColumns:'minmax(0,1fr) 84px auto'}}>
+     <input className="inp" value=${p.txt} onChange=${e=>f('pagamentos',orc.pagamentos.map(x=>x.id===p.id?{...x,txt:e.target.value}:x))}/>
+     <${NumIn} v=${num(p.pct)*100} on=${v=>f('pagamentos',orc.pagamentos.map(x=>x.id===p.id?{...x,pct:v/100}:x))}/>
+     <button className="px-2 mut" aria-label="Apagar prestação" onClick=${()=>f('pagamentos',orc.pagamentos.filter(x=>x.id!==p.id))}>✕</button>
+     <div className="text-xs mut" style=${{gridColumn:'1 / -1',marginTop:-4}}>${(num(p.pct)*100).toLocaleString('pt-PT',{maximumFractionDigits:2})}% · ${eur(R.tot*num(p.pct))} sem IVA · ${eur(R.totIva*num(p.pct))} com IVA</div></div>`)}</div>
+   <div className="text-sm mt-3 font-semibold" style=${{color:Math.abs(pgSum-1)<0.0001?cfg.azul:'var(--fg)'}}>${Math.abs(pgSum-1)<0.0001?'Soma: 100% ✓':'Atenção: a soma das prestações é '+(pgSum*100).toLocaleString('pt-PT',{maximumFractionDigits:2})+'% (deve dar 100%)'}</div><//>
+
+  <${Card} st=${true}><h3 className="font-bold mb-2">Notas</h3><textarea className="inp" rows="5" value=${orc.notas} onChange=${e=>f('notas',e.target.value)}></textarea><//>
+  ${pickCap&&html`<${TextPicker} base=${base} close=${()=>setPickCap(null)} onPick=${t=>addItem(pickCap,t)}/>`}
+ </div>`}
+
+function Orcamentos({orcs,obras,base,cfg,open,criar}){
+ const [q,setQ]=useState('');
+ const nm=id=>(obras.find(o=>o.id===id)||{}).cliente;
+ const rows=orcs.filter(o=>(o.nome+' '+(nm(o.obra)||'')+' '+o.morada).toLowerCase().includes(q.toLowerCase()));
+ return html`<div className="space-y-3">
+  <div className="flex flex-wrap gap-2 items-center"><input className="inp" style=${{flex:'1 1 200px',maxWidth:280}} placeholder="Pesquisar orçamento, cliente ou morada…" value=${q} onChange=${e=>setQ(e.target.value)}/><div className="flex-1"></div><${IB} ic="plus" t="Novo orçamento" pri=${true} txt="Orçamento" on=${()=>criar(0)}/></div>
+  <div className="space-y-2">${rows.map(o=>{const R=orcCalc(o,base);return html`<button key=${o.id} className="card w-full text-left" style=${{padding:'12px 14px'}} onClick=${()=>open(o.id)}>
+   <div className="flex items-start gap-3"><div className="flex-1 min-w-0"><div className="font-semibold">${o.nome}</div><div className="text-xs mut">${nm(o.obra)?nm(o.obra)+' · ':''}versão ${o.versao} · categoria ${o.cat} · ${o.data}</div></div>
+    <div className="text-right"><div className="font-bold">${eur(R.tot)}</div><div className="text-xs mut">sem IVA · margem ${pf(R.margP)}</div></div><span className="mut">›</span></div></button>`})}</div>
+  ${!rows.length&&html`<div className="text-sm mut text-center py-6">Nenhum orçamento encontrado.</div>`}</div>`}
+
+/* ---- orçamento vs. gasto real na página da obra ---- */
+function CapReal({cp,ci,real,cfg}){
+ const [x,setX]=useState(false);
+ const g=cp.its.reduce((s,t)=>s+real(t.i.id),0),pv=cp.custo,pct=pv?g/pv*100:(g?100:0);
+ const sg=v=>html`<span>${v>0?'+':v<0?'−':''}${eur(Math.abs(v))}</span>`;
+ return html`<div className="card" style=${{padding:0}}>
+  <button className="w-full text-left" style=${{padding:'12px 14px'}} onClick=${()=>setX(!x)}>
+   <div className="flex items-start gap-3"><span className="font-extrabold" style=${{minWidth:26,color:cfg.azul}}>${ci+1}</span><div className="flex-1 min-w-0"><div className="font-semibold">${cp.c.nome}</div><div className="text-xs mut">Orçamento ${eur(cp.total)} · custo previsto ${eur(pv)}</div></div>
+    <div className="text-right"><div className="font-bold">${eur(g)}</div><div className="text-xs mut">gasto real</div></div><span className="mut">${x?'▴':'▾'}</span></div>
+   <div className="mt-2"><${Bar} pct=${pct} blue=${cfg.azul} gold=${cfg.ouro}/></div></button>
+  ${x&&html`<div style=${{padding:'4px 14px 12px',borderTop:'1px solid var(--bd)'}}>
+   <div className="text-xs mut py-2">Desvio = gasto real − custo previsto. Valores sem IVA.</div>
+   ${cp.its.map((t,ii)=>{const r=real(t.i.id),d=r-t.c.custo;return html`<div key=${t.i.id} className="py-2" style=${{borderTop:'1px solid var(--bd)'}}>
+    <div className="text-sm"><b>${ci+1}.${ii+1}</b> ${t.i.descr}</div>
+    <div className="grid grid-cols-3 gap-2 text-xs mt-1"><div><div className="mut">Custo previsto</div><b>${eur(t.c.custo)}</b></div><div><div className="mut">Gasto real</div><b>${eur(r)}</b></div><div><div className="mut">Desvio</div><b>${sg(d)}</b></div></div></div>`})}
+   ${!cp.its.length&&html`<div className="text-sm mut py-2">Capítulo sem trabalhos no orçamento.</div>`}</div>`}</div>`}
+function ObraOrc({o,orcs,mats,mos,base,cfg,criarOrc,openOrc}){
+ const orc=orcForObra(orcs,o.id);
+ if(!orc)return html`<${Card} st=${true}><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-bold">Orçamento por capítulo</h3><div className="text-sm mut">Esta obra ainda não tem orçamento ligado.</div></div><${IB} ic="plus" t="Criar orçamento" pri=${true} txt="Orçamento" on=${()=>criarOrc(o.id)}/></div><//>`;
+ const R=orcCalc(orc,base);const mm=mats.filter(m=>m.obra===o.id),ll=mos.filter(m=>m.obra===o.id);
+ const real=id=>mm.filter(m=>m.item===id).reduce((s,m)=>s+netM(m),0)+ll.filter(m=>m.item===id).reduce((s,m)=>s+moTot(m),0);
+ const ids=new Set(orc.caps.flatMap(c=>c.itens.map(i=>i.id)));
+ const sem=mm.filter(m=>!ids.has(m.item)).reduce((s,m)=>s+netM(m),0)+ll.filter(m=>!ids.has(m.item)).reduce((s,m)=>s+moTot(m),0);
+ const lig=R.caps.reduce((s,cp)=>s+cp.its.reduce((a,t)=>a+real(t.i.id),0),0),tg=lig+sem;
+ const pct=R.tot?tg/R.tot*100:0;
+ return html`<${Card} st=${true}>
+  <div className="flex flex-wrap items-start justify-between gap-2 mb-1"><div><h3 className="font-bold">Orçamento vs. gasto real, por capítulo</h3><div className="text-xs mut">${orc.nome} · versão ${orc.versao} · valores sem IVA</div></div><${IB} ic="open" t="Abrir orçamento" on=${()=>openOrc(orc.id)}/></div>
+  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 my-3 text-sm"><div><div className="text-xs mut">Orçamento (venda)</div><b>${eur(R.tot)}</b></div><div><div className="text-xs mut">Custo previsto</div><b>${eur(R.custo)}</b></div><div><div className="text-xs mut">Gasto real</div><b>${eur(tg)}</b></div><div><div className="text-xs mut">Ainda disponível</div><b>${eur(R.tot-tg)}</b></div></div>
+  <${LucroBar} orc=${R.tot} g=${tg} cfg=${cfg}/><div className="text-xs mut mt-1 mb-3">${pct.toFixed(0)}% do orçamento de venda já gasto</div>
+  <div className="space-y-2">${R.caps.map((cp,ci)=>({cp,ci})).filter(x=>x.cp.its.length).map(x=>html`<${CapReal} key=${x.cp.c.id} cp=${x.cp} ci=${x.ci} real=${real} cfg=${cfg}/>`)}</div>
+  ${sem>0&&html`<div className="text-sm mt-3 mut">Gasto ainda sem item do orçamento: <b style=${{color:'var(--fg)'}}>${eur(sem)}</b>. Liga cada fatura ou registo de mão-de-obra a um item para ver a comparação certa.</div>`}
+ <//>`}
+
+/* ---- Base de dados ---- */
+const NEWB=new Set();
+function ListEdit({title,items,onChange,pair}){
+ const [t,setT]=useState('');const [d,setD]=useState('');
+ const add=()=>{if(!t.trim())return;onChange([pair?[t.trim(),d.trim()]:t.trim(),...items]);setT('');setD('')};
+ return html`<${Card} st=${true}><h3 className="font-bold mb-3">${title}</h3>
+  <div className="flex gap-2 mb-3"><input className="inp" style=${{flex:pair?'0 0 90px':'1 1 auto'}} placeholder=${pair?'Código':'Novo…'} value=${t} onChange=${e=>setT(e.target.value)} onKeyDown=${e=>e.key==='Enter'&&add()}/>${pair&&html`<input className="inp" placeholder="Descrição" value=${d} onChange=${e=>setD(e.target.value)} onKeyDown=${e=>e.key==='Enter'&&add()}/>`}<button className="btn" onClick=${add}>+</button></div>
+  <div className="space-y-1.5">${items.map((it,i)=>html`<div key=${i} className="flex gap-2 items-center">
+   ${pair&&html`<input className="inp" style=${{flex:'0 0 90px'}} value=${it[0]} onChange=${e=>onChange(items.map((x,j)=>j===i?[e.target.value,x[1]]:x))}/>`}${pair&&html`<input className="inp" value=${it[1]} onChange=${e=>onChange(items.map((x,j)=>j===i?[x[0],e.target.value]:x))}/>`}${!pair&&html`<input className="inp" value=${it} onChange=${e=>onChange(items.map((x,j)=>j===i?e.target.value:x))}/>`}
+   <button className="px-2 mut" title="Apagar" aria-label="Apagar" onClick=${()=>onChange(items.filter((_,j)=>j!==i))}><${Ic} d=${IC.trash} s=${16}/></button></div>`)}</div><//>`}
+function BaseTextos({base,setBase}){
+ const [q,setQ]=useState('');const [f,setF]=useState('');const [ex,setEx]=useState({});
+ const upd=(id,p)=>setBase({...base,textos:base.textos.map(t=>t.id===id?{...t,...p}:t)});
+ const add=()=>{const id=uid();NEWB.add(id);setBase({...base,textos:[{id,cod:'',tipo:'Geral',cap:'',descr:'',un:'VG',qt:1,mat:0,mo:0,sub:false},...base.textos]})};
+ const rows=base.textos.filter(t=>((t.cod||'')+' '+(t.tipo||'')+' '+(t.cap||'')+' '+t.descr).toLowerCase().includes(q.toLowerCase())&&(!f||t.cap===f));
+ return html`<div className="space-y-3">
+  <div className="flex flex-wrap gap-2"><input className="inp" style=${{flex:'1 1 200px'}} placeholder="Pesquisar textos…" value=${q} onChange=${e=>setQ(e.target.value)}/><select className="inp" style=${{flex:'1 1 170px'}} value=${f} onChange=${e=>setF(e.target.value)}><option value="">Todos os capítulos</option>${base.caps.map(c=>html`<option key=${c}>${c}</option>`)}</select><${IB} ic="plus" t="Novo texto" pri=${true} txt="Texto" on=${add}/></div>
+  <div className="text-xs mut">${rows.length} textos. Ao criar um trabalho no orçamento, escolhes um destes textos e podes editar tudo à mão.</div>
+  <div className="space-y-2">${rows.map(t=>{const o=ex[t.id]!==undefined?ex[t.id]:NEWB.has(t.id);return html`<div key=${t.id} className="card" style=${{padding:0}}>
+   <button className="w-full text-left flex items-start gap-3" style=${{padding:'12px 14px'}} onClick=${()=>setEx({...ex,[t.id]:!o})}>
+    <span className="text-xs font-bold mut shrink-0 pt-0.5" style=${{minWidth:30}}>${t.cod||'—'}</span>
+    <div className="flex-1 min-w-0"><div className="text-sm line-clamp-2">${t.descr||'Texto vazio'}</div><div className="text-xs mut mt-0.5">${t.tipo||'Geral'}${t.cap?' · '+t.cap:''} · ${t.qt||1} ${t.un}</div></div>
+    ${(num(t.mat)+num(t.mo))>0&&html`<div className="text-right text-xs mut shrink-0">custo<div className="font-bold" style=${{color:'var(--fg)'}}>${eur(num(t.mat)+num(t.mo))}</div></div>`}<span className="mut">${o?'▴':'▾'}</span></button>
+   ${o&&html`<div style=${{padding:'12px 14px 14px',borderTop:'1px solid var(--bd)'}}>
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+     <${F2} l="Código"><input className="inp" value=${t.cod||''} onChange=${e=>upd(t.id,{cod:e.target.value})}/><//>
+     <${F2} l="Espaço"><input className="inp" list="dl-esp" value=${t.tipo||''} onChange=${e=>upd(t.id,{tipo:e.target.value})}/><//>
+     <${F2} l="Capítulo"><select className="inp" value=${t.cap||''} onChange=${e=>upd(t.id,{cap:e.target.value})}><option value="">— Sem capítulo —</option>${base.caps.map(c=>html`<option key=${c}>${c}</option>`)}</select><//>
+     <${F2} l="Unidade"><select className="inp" value=${t.un} onChange=${e=>upd(t.id,{un:e.target.value})}>${base.unidades.map(u=>html`<option key=${u[0]}>${u[0]}</option>`)}</select><//>
+     <${F2} l="Quantidade padrão"><${NumIn} v=${t.qt} on=${v=>upd(t.id,{qt:v})}/><//>
+     <${F2} l="Custo material (€)"><${NumIn} v=${t.mat} on=${v=>upd(t.id,{mat:v})}/><//>
+     <${F2} l="Custo mão-de-obra (€)"><${NumIn} v=${t.mo} on=${v=>upd(t.id,{mo:v})}/><//>
+     <${F2} l="Subcontratada"><label className="flex items-center gap-2 text-sm" style=${{minHeight:34}}><input type="checkbox" checked=${!!t.sub} onChange=${e=>upd(t.id,{sub:e.target.checked})}/>Sim (X)</label><//></div>
+    <div className="mt-3"><${F2} l="Texto descritivo"><textarea className="inp" rows="5" value=${t.descr} onChange=${e=>upd(t.id,{descr:e.target.value})}></textarea><//></div>
+    <div className="flex gap-2 justify-end mt-3"><${IB} ic="copy" t="Duplicar" on=${()=>{const id=uid();NEWB.add(id);setBase({...base,textos:[{...t,id,cod:''},...base.textos]})}}/><${ConfDel} t="Apagar" on=${()=>setBase({...base,textos:base.textos.filter(x=>x.id!==t.id)})}/></div></div>`}</div>`})}</div>
+  <datalist id="dl-esp">${base.espacos.map(s=>html`<option key=${s} value=${s}/>`)}</datalist></div>`}
+function BasePrecos({base,setBase}){
+ const [q,setQ]=useState('');const [f,setF]=useState('');const [ex,setEx]=useState({});
+ const upd=(id,p)=>setBase({...base,precos:base.precos.map(t=>t.id===id?{...t,...p}:t)});
+ const add=(tipo)=>{const id=uid();NEWB.add(id);setBase({...base,precos:[{id,tipo,nome:'',un:tipo==='Material'?'UN':'DIA',preco:0,cap:''},...base.precos]})};
+ const rows=base.precos.filter(p=>(p.nome+' '+(p.cap||'')).toLowerCase().includes(q.toLowerCase())&&(!f||p.tipo===f));
+ return html`<div className="space-y-3">
+  <div className="flex flex-wrap gap-2 items-center"><input className="inp" style=${{flex:'1 1 180px',maxWidth:260}} placeholder="Pesquisar preços…" value=${q} onChange=${e=>setQ(e.target.value)}/>
+   <div className="flex gap-1">${[['','Todos'],['Material','Materiais'],['Mão-de-obra','Mão-de-obra']].map(a=>html`<button key=${a[0]} onClick=${()=>setF(a[0])} className="px-3 py-1.5 rounded-full text-xs font-semibold" style=${{background:f===a[0]?'var(--blue)':'var(--card)',color:f===a[0]?'#fff':'var(--fg)',border:'1px solid var(--bd)'}}>${a[1]}</button>`)}</div><div className="flex-1"></div>
+   <${IB} ic="plus" t="Novo preço de mão-de-obra" txt="Mão-de-obra" on=${()=>add('Mão-de-obra')}/><${IB} ic="plus" t="Novo preço de material" pri=${true} txt="Material" on=${()=>add('Material')}/></div>
+  <div className="text-xs mut">Os preços iniciais são exemplos. Substitui-os pelos teus valores. No orçamento, o botão Tabela aplica um preço ao custo do material ou da mão-de-obra.</div>
+  <div className="space-y-2">${rows.map(p=>{const o=ex[p.id]!==undefined?ex[p.id]:NEWB.has(p.id);return html`<div key=${p.id} className="card" style=${{padding:0}}>
+   <button className="w-full text-left flex items-center gap-3" style=${{padding:'12px 14px'}} onClick=${()=>setEx({...ex,[p.id]:!o})}>
+    <div className="flex-1 min-w-0"><div className="font-semibold">${p.nome||'Sem nome'}</div><div className="text-xs mut">${p.tipo}${p.cap?' · '+p.cap:''}</div></div>
+    <div className="text-right"><div className="font-bold">${eur(p.preco)}</div><div className="text-xs mut">/ ${p.un}</div></div><span className="mut">${o?'▴':'▾'}</span></button>
+   ${o&&html`<div style=${{padding:'12px 14px 14px',borderTop:'1px solid var(--bd)'}}>
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+     <div className="col-span-2"><${F2} l="Nome"><input className="inp" value=${p.nome} onChange=${e=>upd(p.id,{nome:e.target.value})}/><//></div>
+     <${F2} l="Tipo"><select className="inp" value=${p.tipo} onChange=${e=>upd(p.id,{tipo:e.target.value})}><option>Material</option><option>Mão-de-obra</option></select><//>
+     <${F2} l="Unidade"><input className="inp" list="dl-un" value=${p.un} onChange=${e=>upd(p.id,{un:e.target.value})}/><//>
+     <${F2} l="Preço unitário (€)"><${NumIn} v=${p.preco} on=${v=>upd(p.id,{preco:v})}/><//>
+     <div className="col-span-2"><${F2} l="Capítulo"><select className="inp" value=${p.cap||''} onChange=${e=>upd(p.id,{cap:e.target.value})}><option value="">— Sem capítulo —</option>${base.caps.map(c=>html`<option key=${c}>${c}</option>`)}</select><//></div></div>
+    <div className="flex gap-2 justify-end mt-3"><${IB} ic="copy" t="Duplicar" on=${()=>{const id=uid();NEWB.add(id);setBase({...base,precos:[{...p,id},...base.precos]})}}/><${ConfDel} t="Apagar" on=${()=>setBase({...base,precos:base.precos.filter(x=>x.id!==p.id)})}/></div></div>`}</div>`})}</div>
+  <datalist id="dl-un">${base.unidades.map(u=>html`<option key=${u[0]} value=${u[0]}/>`).concat([html`<option key="DIA" value="DIA"/>`])}</datalist></div>`}
+function BasePct({base,setBase,cfg}){
+ const setP=(k,f,v)=>setBase({...base,params:{...base.params,[k]:{...base.params[k],[f]:v}}});
+ const F=[['mat','Margem sobre materiais','Aplica-se quando o trabalho tem material e mão-de-obra.'],['mo','Margem sobre mão-de-obra','Mão-de-obra própria.'],['mm','Margem material + mão-de-obra','Só se houver material e mão-de-obra no mesmo trabalho.'],['ind','Custos indiretos','Aplicados ao subtotal.'],['buf','Buffer','Reserva final sobre o preço.'],['forn','Margem só fornecimento (FORN.)','Trabalho só com material ou sem mão-de-obra.'],['sub','Margem subempreitada (SUB.)','Mão-de-obra subcontratada.']];
+ return html`<div className="space-y-3">
+  <div className="text-xs mut">Estas percentagens vêm da folha CATEGORIA OBRA do Excel e alimentam o cálculo de todos os orçamentos, conforme a categoria escolhida.</div>
+  <div className="grid md:grid-cols-3 gap-4">${['A','B','C'].map(k=>html`<${Card} key=${k} st=${true}>
+   <div className="flex items-baseline gap-2 mb-2"><span className="text-3xl font-extrabold" style=${{color:cfg.azul}}>${k}</span><input className="inp" value=${base.catDesc[k]} onChange=${e=>setBase({...base,catDesc:{...base.catDesc,[k]:e.target.value}})}/></div>
+   <div className="space-y-2">${F.map(a=>html`<div key=${a[0]}><${F2} l=${a[1]+' (%)'}><${Pct} v=${base.params[k][a[0]]} on=${v=>setP(k,a[0],v)}/><//><div className="text-[11px] mut">${a[2]}</div></div>`)}</div><//>`)}</div></div>`}
+function Base({base,setBase,cfg}){
+ const [sec,setSec]=useState('textos');
+ return html`<div className="space-y-4">
+  <${Seg} v=${sec} on=${setSec} opts=${[['textos','Textos'],['precos','Preços'],['pct','Margens'],['listas','Listas']]}/>
+  ${sec==='textos'&&html`<${BaseTextos} base=${base} setBase=${setBase}/>`}
+  ${sec==='precos'&&html`<${BasePrecos} base=${base} setBase=${setBase}/>`}
+  ${sec==='pct'&&html`<${BasePct} base=${base} setBase=${setBase} cfg=${cfg}/>`}
+  ${sec==='listas'&&html`<div className="grid md:grid-cols-3 gap-4"><${ListEdit} title="Unidades" pair=${true} items=${base.unidades} onChange=${v=>setBase({...base,unidades:v})}/><${ListEdit} title="Espaços" items=${base.espacos} onChange=${v=>setBase({...base,espacos:v})}/><${ListEdit} title="Capítulos padrão" items=${base.caps} onChange=${v=>setBase({...base,caps:v})}/></div>`}
+ </div>`}
+
+const ORC_DEF=[];const BASE_VAZIA={...BASE0,textos:[],precos:[]};
+
+/* ======== v6: PDF do orçamento + importar faturas ======== */
+function docModel(orc,base){
+ const R=orcCalc(orc,base);
+ const caps=R.caps.map((cp,ci)=>({n:ci+1,nome:cp.c.nome,total:cp.total,rows:cp.its.map((t,ii)=>({n:(ci+1)+'.'+(ii+1),descr:t.i.descr||'',un:t.i.un||'',qt:num(t.i.qt),pu:t.c.R,tot:t.c.Y}))})).filter(c=>c.rows.length);
+ return {R,caps,pag:orc.pagamentos.filter(p=>num(p.pct)>0).map(p=>({txt:p.txt,pct:num(p.pct),sem:R.tot*num(p.pct),com:R.totIva*num(p.pct)}))};
+}
+const mny=v=>eurS(v).replace(/ | /g,' ');
+const qtS=q=>q.toLocaleString('pt-PT',{maximumFractionDigits:2});
+const hex2rgb=h=>{const m=/^#?([0-9a-f]{6})$/i.exec(h||'');if(!m)return [29,78,216];const n=parseInt(m[1],16);return [n>>16,(n>>8)&255,n&255]};
+function buildPdf(orc,base,obra,empresa,azul){
+ const J=window.jspdf&&window.jspdf.jsPDF;if(!J)throw new Error('lib');
+ const M=docModel(orc,base),R=M.R,doc=new J({unit:'mm',format:'a4'});
+ const W=210,L=15,RT=195,BOT=280,col=hex2rgb(azul);
+ let y=0;
+ const nm=obra&&obra.cliente?obra.cliente:orc.nome;
+ const head=first=>{
+  doc.setFont('helvetica','bold');doc.setFontSize(15);doc.setTextColor(20,20,20);doc.text(empresa||'Orçamento',L,18);
+  doc.setFontSize(11);doc.setTextColor(col[0],col[1],col[2]);doc.text('ORÇAMENTO',RT,18,{align:'right'});
+  doc.setDrawColor(col[0],col[1],col[2]);doc.setLineWidth(0.8);doc.line(L,22,RT,22);y=30;
+ };
+ const need=h=>{if(y+h>BOT){doc.addPage();head(false);}};
+ const th=()=>{doc.setFillColor(240,240,240);doc.rect(L,y-4,RT-L,7,'F');doc.setFont('helvetica','bold');doc.setFontSize(8);doc.setTextColor(90,90,90);
+  doc.text('Nº',L+2,y);doc.text('DESCRIÇÃO',L+14,y);doc.text('UN.',L+108,y);doc.text('QT.',L+130,y,{align:'right'});doc.text('PREÇO UN.',L+155,y,{align:'right'});doc.text('TOTAL',RT-2,y,{align:'right'});y+=6;};
+ head(true);
+ doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(110,110,110);doc.text('CLIENTE / OBRA',L,y);doc.text('DATA',RT-60,y);doc.text('VERSÃO',RT-25,y);y+=5;
+ doc.setFont('helvetica','bold');doc.setFontSize(12);doc.setTextColor(20,20,20);doc.text(doc.splitTextToSize(nm||'',RT-L-70),L,y);
+ doc.setFontSize(10);doc.setFont('helvetica','normal');doc.text(String(orc.data||''),RT-60,y);doc.text(String(orc.versao||1),RT-25,y);y+=6;
+ if(orc.morada){doc.setFontSize(10);doc.setTextColor(60,60,60);const l=doc.splitTextToSize(orc.morada,RT-L);doc.text(l,L,y);y+=l.length*4.6;}
+ if(orc.descricao){y+=2;doc.setFontSize(9.5);doc.setTextColor(60,60,60);const l=doc.splitTextToSize(orc.descricao,RT-L);doc.text(l,L,y);y+=l.length*4.4;}
+ y+=6;
+ if(!M.caps.length){doc.setFontSize(10);doc.setTextColor(120,120,120);doc.text('Sem trabalhos neste orçamento.',L,y);y+=8}
+ M.caps.forEach(c=>{
+  need(30);doc.setFillColor(col[0],col[1],col[2]);doc.rect(L,y-5,RT-L,8,'F');doc.setFont('helvetica','bold');doc.setFontSize(10.5);doc.setTextColor(255,255,255);
+  doc.text(c.n+'  '+c.nome,L+2,y);doc.text(mny(c.total),RT-2,y,{align:'right'});y+=8;th();
+  c.rows.forEach(r=>{
+   const lines=doc.splitTextToSize(r.descr,88),h=Math.max(lines.length*4.2,5)+3;
+   if(y+h>BOT){doc.addPage();head(false);th();}
+   doc.setFont('helvetica','normal');doc.setFontSize(8.5);doc.setTextColor(30,30,30);
+   doc.text(r.n,L+2,y);doc.text(lines,L+14,y);doc.text(String(r.un),L+108,y);doc.text(qtS(r.qt),L+130,y,{align:'right'});doc.text(mny(r.pu),L+155,y,{align:'right'});
+   doc.setFont('helvetica','bold');doc.text(mny(r.tot),RT-2,y,{align:'right'});
+   y+=h;doc.setDrawColor(225,225,225);doc.setLineWidth(0.2);doc.line(L,y-3.5,RT,y-3.5);
+  });
+  y+=4;
+ });
+ need(40);y+=2;
+ doc.setDrawColor(col[0],col[1],col[2]);doc.setLineWidth(0.5);doc.line(RT-90,y-4,RT,y-4);
+ doc.setFont('helvetica','normal');doc.setFontSize(10);doc.setTextColor(40,40,40);
+ doc.text('Total dos trabalhos (sem IVA)',RT-60,y);doc.text(mny(R.tot),RT-2,y,{align:'right'});y+=6;
+ doc.text('IVA ('+qtS(num(orc.iva))+'%)',RT-60,y);doc.text(mny(R.iva),RT-2,y,{align:'right'});y+=7;
+ doc.setFont('helvetica','bold');doc.setFontSize(12.5);doc.setTextColor(col[0],col[1],col[2]);doc.text('TOTAL COM IVA',RT-60,y);doc.text(mny(R.totIva),RT-2,y,{align:'right'});y+=12;
+ if(M.pag.length){need(14+M.pag.length*6);doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(20,20,20);doc.text('Condições de pagamento',L,y);y+=6;
+  doc.setFont('helvetica','normal');doc.setFontSize(9.5);doc.setTextColor(50,50,50);
+  M.pag.forEach(p=>{doc.text(qtS(p.pct*100)+'%  -  '+p.txt,L+2,y);doc.text(mny(p.com)+' (com IVA)',RT-2,y,{align:'right'});y+=5.6});y+=6}
+ if(orc.notas){const l=doc.splitTextToSize(orc.notas,RT-L);need(10+l.length*4.2);doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(20,20,20);doc.text('Notas',L,y);y+=5.5;
+  doc.setFont('helvetica','normal');doc.setFontSize(8.5);doc.setTextColor(90,90,90);
+  l.forEach(t=>{if(y>BOT){doc.addPage();head(false)}doc.text(t,L,y);y+=4.2})}
+ const n=doc.getNumberOfPages();
+ for(let i=1;i<=n;i++){doc.setPage(i);doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(140,140,140);doc.text((empresa||'')+' · '+(orc.nome||''),L,290);doc.text('Página '+i+' de '+n,RT,290,{align:'right'})}
+ return doc;
+}
+async function exportPdf(orc,base,obra,cfg){
+ let doc;try{doc=buildPdf(orc,base,obra,cfg.empresa,cfg.azul)}catch(e){return 'Não foi possível gerar o PDF neste momento. Usa a vista de impressão.'}
+ const name=('Orcamento-'+(orc.nome||'obra')+'-v'+orc.versao).normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9\-]+/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'')+'.pdf';
+ let D=null;try{D=window.claude&&window.claude.use?await window.claude.use('downloads'):null}catch(e){}
+ if(!D){try{doc.save(name);return 'PDF pronto: '+name}catch(e){return 'Não foi possível transferir o PDF.'}}
+ try{await D.save({filename:name,data:doc.output('arraybuffer')});return 'PDF pronto: '+name}catch(e){return e&&e.code==='declined'?'Transferência cancelada.':'Não foi possível transferir o PDF ('+((e&&e.code)||'erro')+').'}
+}
+function OrcDoc({orc,base,obra,cfg,close,onPdf,msg}){
+ const M=docModel(orc,base),R=M.R,nm=obra&&obra.cliente?obra.cliente:orc.nome;
+ const P={background:'#fff',color:'#1a1a1a',padding:'28px 24px',borderRadius:8,fontSize:13,lineHeight:1.45,border:'1px solid #ddd'};
+ const lbl={fontSize:10,letterSpacing:'.08em',textTransform:'uppercase',color:'#777',fontWeight:700};
+ return html`<${Modal} close=${close} wide=${900}>
+  <div className="flex flex-wrap items-center justify-between gap-2 mb-3"><h3 className="font-bold text-lg">Vista de impressão</h3><div className="flex gap-2 items-center flex-wrap"><${IB} ic="dl" t="Transferir Orçamento em PDF" pri=${true} txt="PDF" on=${onPdf}/><button className="text-2xl px-2" onClick=${close} aria-label="Fechar">×</button></div></div>
+  ${msg&&html`<div className="text-sm mb-3 font-semibold" style=${{color:cfg.azul}}>${msg}</div>`}
+  <div style=${P}>
+   <div style=${{display:'flex',justifyContent:'space-between',alignItems:'baseline',borderBottom:'3px solid '+cfg.azul,paddingBottom:8,gap:12,flexWrap:'wrap'}}><b style=${{fontSize:19}}>${cfg.empresa}</b><b style=${{color:cfg.azul,letterSpacing:'.08em'}}>ORÇAMENTO</b></div>
+   <div style=${{display:'flex',justifyContent:'space-between',gap:16,flexWrap:'wrap',marginTop:14}}><div style=${{flex:'1 1 240px',minWidth:0}}><div style=${lbl}>Cliente / obra</div><div style=${{fontWeight:700,fontSize:16}}>${nm}</div>${orc.morada&&html`<div style=${{color:'#444'}}>${orc.morada}</div>`}</div><div><div style=${lbl}>Data</div><div>${orc.data}</div></div><div><div style=${lbl}>Versão</div><div>${orc.versao}</div></div></div>
+   ${orc.descricao&&html`<div style=${{marginTop:10,color:'#444'}}>${orc.descricao}</div>`}
+   ${M.caps.map(c=>html`<div key=${c.n} style=${{marginTop:18}}>
+    <div style=${{background:cfg.azul,color:'#fff',padding:'6px 10px',display:'flex',justifyContent:'space-between',gap:10,fontWeight:700,borderRadius:4}}><span>${c.n}  ${c.nome}</span><span>${eur(c.total)}</span></div>
+    ${c.rows.map(r=>html`<div key=${r.n} style=${{display:'grid',gridTemplateColumns:'38px minmax(0,1fr) auto',gap:10,padding:'8px 4px',borderBottom:'1px solid #e5e5e5'}}>
+     <b style=${{color:'#666'}}>${r.n}</b><div style=${{minWidth:0}}>${r.descr}<div style=${{fontSize:11,color:'#777',marginTop:2}}>${qtS(r.qt)} ${r.un} × ${eur(r.pu)}</div></div><b style=${{textAlign:'right',whiteSpace:'nowrap'}}>${eur(r.tot)}</b></div>`)}</div>`)}
+   ${!M.caps.length&&html`<div style=${{marginTop:18,color:'#777'}}>Sem trabalhos neste orçamento.</div>`}
+   <div style=${{marginTop:20,marginLeft:'auto',maxWidth:340}}>
+    <div style=${{display:'flex',justifyContent:'space-between',padding:'3px 0'}}><span>Total dos trabalhos (sem IVA)</span><b>${eur(R.tot)}</b></div>
+    <div style=${{display:'flex',justifyContent:'space-between',padding:'3px 0'}}><span>IVA (${qtS(num(orc.iva))}%)</span><b>${eur(R.iva)}</b></div>
+    <div style=${{display:'flex',justifyContent:'space-between',padding:'8px 0 0',borderTop:'2px solid '+cfg.azul,marginTop:4,fontSize:17,color:cfg.azul}}><b>TOTAL COM IVA</b><b>${eur(R.totIva)}</b></div></div>
+   ${M.pag.length>0&&html`<div style=${{marginTop:20}}><div style=${lbl}>Condições de pagamento</div>${M.pag.map((p,i)=>html`<div key=${i} style=${{display:'flex',justifyContent:'space-between',gap:10,padding:'3px 0'}}><span>${qtS(p.pct*100)}% · ${p.txt}</span><b>${eur(p.com)}</b></div>`)}</div>`}
+   ${orc.notas&&html`<div style=${{marginTop:20}}><div style=${lbl}>Notas</div><div style=${{whiteSpace:'pre-wrap',color:'#555',fontSize:12}}>${orc.notas}</div></div>`}
+  </div>
+ <//>`}
+
+/* ---- importar / simular leitura de fatura ---- */
+const SIMF=[['Cimentos do Norte','Cimento e argamassa',480,'Alvenaria'],['Eletro Sul','Material elétrico diverso',365.4,'Elétrico'],['Hidro Norte','Tubagem e acessórios',212.8,'Canalização'],['Cerâmicas Atlântico','Revestimento cerâmico',1290,'Acabamentos'],['Tintas do Vale','Tintas e rolos',174.5,'Acabamentos']];
+const ptDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')?s:new Date().toISOString().slice(0,10);
+async function lerFatura(file){
+ const hoje=new Date().toISOString().slice(0,10);
+ try{
+  if(/^image\//.test(file.type)){
+   const S=window.claude&&window.claude.use?await window.claude.use('sample'):null;
+   if(S){let ok=false;try{const L=await S.limits();ok=!!(L&&L.images)}catch(e){}
+    if(ok){const r=await S.json('Lê a fatura nesta imagem e responde só com JSON: {"fornecedor":string,"data":"AAAA-MM-DD","numero":string,"artigo":"descrição curta do que foi comprado","liquido":número sem IVA,"iva_pct":número,"total":número}. Usa null no que não estiver legível.',{images:[file],modelTier:'quick'});
+     if(r&&(num(r.total)||num(r.liquido))){const iva=r.iva_pct==null?23:num(r.iva_pct);const liq=num(r.liquido)||num(r.total)/(1+iva/100);
+      return {forn:String(r.fornecedor||'').slice(0,80),data:ptDate(r.data),nf:String(r.numero||'').slice(0,40),artigo:String(r.artigo||'Fatura importada').slice(0,120),qtd:1,preco:Math.round(liq*100)/100,iva,cat:'Outros',lido:'auto'}}}}
+  }
+ }catch(e){}
+ return {forn:'',data:hoje,nf:'',artigo:(file.name||'Fatura importada').replace(/\.[^.]+$/,''),qtd:1,preco:0,iva:23,cat:'Outros',lido:'manual'};
+}
+function ImportBtn({onAdd}){
+ const ref=useRef(null);const [st,setSt]=useState('');
+ const go=async f=>{if(!f)return;setSt('A ler a fatura…');
+  try{const [ler,att]=await Promise.all([lerFatura(f),saveAtt(f).catch(()=>null)]);onAdd({...ler,pago:false,anexo:att});setSt(ler.lido==='auto'?'Fatura lida. Confirma os valores.':'Fatura anexada. Preenche os valores.')}
+  catch(e){setSt('Não foi possível importar este ficheiro.')}
+  setTimeout(()=>setSt(''),6000)};
+ return html`<span className="inline-flex items-center gap-2 flex-wrap"><input ref=${ref} type="file" accept="image/*,application/pdf" hidden onChange=${e=>{go(e.target.files[0]);e.target.value=''}}/><${IB} ic="upl" t="Importar fatura (PDF ou foto)" on=${()=>ref.current&&ref.current.click()}/>${st&&html`<span className="text-xs font-semibold" style=${{color:'var(--blue)'}}>${st}</span>`}</span>`}
+
+const KEYS=['dash','obras','orc','fat','mo','tar','base'];
+function App(){
+ const [cfg,setCfg]=useState(loadCfg);
+ const [tab,setTab0]=useState('dash');const setTab=k=>{setTab0(k);setDet(0);setOrcDet('');setMais(false)};const openObra=id=>{setTab0('obras');setDet(id)};const [open,setOpen]=useState(false);
+ const [obras,setObras]=usePersist('obras-hc1',[]);const [mats,setMats]=usePersist('mats-hc1',[]);const [mos,setMos]=usePersist('mos-hc1',[]);const [tars,setTars]=usePersist('tars-hc1',[]);const [det,setDet]=useState(0);const [orcs,setOrcs]=usePersist('orcs-hc1',[]);const [base,setBase]=usePersist('base-hc1',BASE_VAZIA);const [orcDet,setOrcDet]=useState('');const [mais,setMais]=useState(false);
+ const set=p=>setCfg(c=>({...c,...p}));
+ const openOrc=id=>{setTab0('orc');setOrcDet(id);setMais(false);try{window.scrollTo(0,0)}catch(e){}};
+ const criarOrc=(obraId)=>{const ob=obras.find(o=>o.id===obraId);const o=newOrc(base,ob);setOrcs([o,...orcs]);openOrc(o.id)};
+ useEffect(()=>{const r=document.documentElement;
+  r.style.setProperty('--blue',cfg.azul);r.style.setProperty('--gold',cfg.ouro);r.style.setProperty('--r',cfg.raio+'px');r.style.setProperty('--pad',cfg.dens==='comp'?'12px':'18px');
+  if(cfg.tema==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',cfg.tema==='escuro'?'dark':'light');
+  r.classList.toggle('nostripes',!cfg.riscas);
+  try{localStorage.setItem('cfg-obras-hc1',JSON.stringify(cfg))}catch(e){};window.Cloud&&window.Cloud.save('cfg-obras-hc1',cfg)},[cfg]);
+ const gasto=id=>mats.filter(m=>m.obra===id).reduce((s,m)=>s+matTot(m),0)+mos.filter(m=>m.obra===id).reduce((s,m)=>s+moTot(m),0);
+ const side=cfg.menu==='lateral';
+ const gear=html`<button onClick=${()=>setOpen(true)} className="flex items-center gap-2 text-sm font-semibold px-3 py-2 rounded-lg" style=${{border:'1px solid var(--bd)',color:'var(--fg)'}}><${Ic} d=${IC.set} s=${18}/><span>Personalizar</span></button>`;
+ return html`<div className="min-h-screen">
+  ${side&&html`<aside className="hidden md:flex fixed left-0 top-0 bottom-0 w-60 flex-col blk z-30" style=${{paddingTop:'env(safe-area-inset-top,0px)'}}>
+   <div className="stripes absolute right-0 top-0 bottom-0 w-1.5"></div>
+   <div className="p-6"><div className="text-[10px] uppercase tracking-[.25em]" style=${{color:cfg.ouro}}>Gestão de obras</div><div className="font-extrabold text-lg leading-tight mt-1">${cfg.empresa}</div></div>
+   <nav className="px-3 space-y-1 flex-1">${KEYS.map(k=>html`<button key=${k} onClick=${()=>setTab(k)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold text-left" style=${{background:tab===k?cfg.azul:'transparent',color:tab===k?'#fff':'#a3a3a3'}}><${Ic} d=${IC[k]}/>${cfg.tabs[k]}</button>`)}</nav>
+   <div className="p-4 pr-5">${gear}</div></aside>`}
+  <header className=${'sticky top-0 z-30 blk '+(side?'md:hidden':'')}>
+   <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+    <div className="font-extrabold leading-tight min-w-0 flex-1">${cfg.empresa}</div>
+    <nav className="hidden md:flex gap-1">${KEYS.map(k=>html`<button key=${k} onClick=${()=>setTab(k)} className="px-3 py-2 rounded-lg text-sm font-semibold" style=${{background:tab===k?cfg.azul:'transparent',color:tab===k?'#fff':'#a3a3a3'}}>${cfg.tabs[k]}</button>`)}</nav>
+    <button onClick=${()=>setOpen(true)} aria-label="Personalizar" className="p-2 rounded-lg" style=${{border:'1px solid var(--bd)',color:'var(--fg)'}}><${Ic} d=${IC.set} s=${18}/></button>
+   </div><div className="stripes h-1"></div></header>
+  <main className=${side?'md:pl-60':''}><div className="max-w-6xl mx-auto p-4 md:p-8 pb-28 md:pb-10">
+   <div className="mb-5 text-center md:text-left"><div className="text-[11px] uppercase tracking-[.25em] gold font-semibold">${cfg.empresa}</div><h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">${tab==='obras'&&det>0?(obras.find(o=>o.id===det)||{}).cliente:tab==='orc'&&orcDet?((orcs.find(o=>o.id===orcDet)||{}).nome||cfg.tabs.orc):cfg.tabs[tab]}</h1><div className="stripes h-1 w-16 mt-2"></div></div>
+   ${tab==='dash'&&html`<${Dashboard} obras=${obras} mats=${mats} mos=${mos} gasto=${gasto} cfg=${cfg} tars=${tars} open=${openObra}/>`}
+   ${tab==='obras'&&det===0&&html`<${Obras} obras=${obras} setObras=${setObras} gasto=${gasto} mats=${mats} mos=${mos} cfg=${cfg} tars=${tars} open=${openObra}/>`}
+   ${tab==='obras'&&det>0&&obras.find(o=>o.id===det)&&html`<${ObraPage} orcs=${orcs} base=${base} criarOrc=${criarOrc} openOrc=${openOrc} o=${obras.find(o=>o.id===det)} obras=${obras} setObras=${setObras} mats=${mats} setMats=${setMats} mos=${mos} tars=${tars} setTars=${setTars} cfg=${cfg} gasto=${gasto} back=${()=>setDet(0)}/>`}
+   ${tab==='orc'&&!orcDet&&html`<${Orcamentos} orcs=${orcs} obras=${obras} base=${base} cfg=${cfg} open=${openOrc} criar=${criarOrc}/>`}
+   ${tab==='orc'&&orcDet&&orcs.find(o=>o.id===orcDet)&&html`<${OrcPage} orc=${orcs.find(o=>o.id===orcDet)} orcs=${orcs} setOrcs=${setOrcs} obras=${obras} setObras=${setObras} base=${base} setBase=${setBase} cfg=${cfg} back=${()=>setOrcDet('')} openOrc=${openOrc} goBase=${()=>setTab('base')}/>`}
+   ${tab==='base'&&html`<${Base} base=${base} setBase=${setBase} cfg=${cfg}/>`}
+   ${tab==='tar'&&html`<${Tarefas} tars=${tars} setTars=${setTars} obras=${obras} cfg=${cfg}/>`}
+   ${tab==='fat'&&html`<${Faturas} mats=${mats} setMats=${setMats} obras=${obras} cfg=${cfg} orcs=${orcs}/>`}
+   ${tab==='mo'&&html`<${MaoObra} mos=${mos} setMos=${setMos} obras=${obras} cfg=${cfg} orcs=${orcs}/>`}
+  </div></main>
+  <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 blk" style=${{paddingBottom:'env(safe-area-inset-bottom,0px)'}}><div className="stripes h-1"></div>
+   <div className="grid grid-cols-5">${['dash','obras','orc','fat'].map(k=>html`<button key=${k} onClick=${()=>setTab(k)} className="py-2 flex flex-col items-center gap-0.5 text-[10px] font-semibold" style=${{color:tab===k?cfg.azul:'#a3a3a3'}}><${Ic} d=${IC[k]}/><span className="px-0.5 text-center leading-tight">${cfg.tabs[k].split(' ')[0]}</span></button>`)}
+    <button onClick=${()=>setMais(!mais)} className="py-2 flex flex-col items-center gap-0.5 text-[10px] font-semibold" style=${{color:mais||['mo','tar','base'].includes(tab)?cfg.azul:'#a3a3a3'}}><${Ic} d=${IC.more}/><span>Mais</span></button></div></nav>
+  ${mais&&html`<div className="fixed inset-0 z-40 md:hidden" style=${{background:'rgba(0,0,0,.5)'}} onClick=${()=>setMais(false)}><div className="absolute left-0 right-0 bottom-0 blk p-4" style=${{borderTop:'1px solid var(--bd)',borderRadius:'16px 16px 0 0',paddingBottom:'calc(16px + env(safe-area-inset-bottom,0px))'}} onClick=${e=>e.stopPropagation()}>
+   <div className="space-y-1">${['mo','tar','base'].map(k=>html`<button key=${k} onClick=${()=>setTab(k)} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-semibold text-left" style=${{background:tab===k?cfg.azul:'transparent',color:tab===k?'#fff':'var(--fg)'}}><${Ic} d=${IC[k]}/>${cfg.tabs[k]}</button>`)}
+   <button onClick=${()=>{setMais(false);setOpen(true)}} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-semibold text-left"><${Ic} d=${IC.set}/>Personalizar</button></div></div></div>`}
+  
+  ${open&&html`<${Drawer} cfg=${cfg} set=${set} close=${()=>setOpen(false)} reset=${()=>setCfg(DEF)} resetData=${()=>{setObras([]);setMats([]);setMos([]);setTars([]);setOrcs([]);setBase(BASE_VAZIA)}}/>`}
+ </div>`}
+(function(){let t;const run=()=>{document.querySelectorAll('table').forEach(tb=>{const h=[...tb.querySelectorAll('thead th')].map(x=>x.textContent.trim());tb.querySelectorAll('tbody tr').forEach(r=>[...r.children].forEach((td,i)=>{if(td.getAttribute('data-l')!==(h[i]||''))td.setAttribute('data-l',h[i]||'')}))})};new MutationObserver(()=>{cancelAnimationFrame(t);t=requestAnimationFrame(run)}).observe(document.getElementById('root'),{childList:true,subtree:true});run()})();
+/* ======== Arranque: login Supabase + sincronização ======== */
+function Conta(){
+ const C=window.Cloud;
+ if(!C||!C.ready)return html`<${Sec} t="Nuvem (Supabase)"><div className="text-sm mut">Os dados estão guardados só neste aparelho.</div><button className="btn2 mt-2" onClick=${()=>{try{localStorage.removeItem('hc-local')}catch(e){};location.reload()}}>Ligar ao Supabase</button><//>`;
+ return html`<${Sec} t="Conta na nuvem"><div className="text-sm">Ligado como <b>${C.user.email}</b></div><div className="text-xs mut mt-1">Os dados ficam sincronizados entre os teus aparelhos.</div><button className="btn2 mt-2" onClick=${async()=>{await C.flush();await C.sb.auth.signOut();location.reload()}}>Terminar sessão</button><//>`}
+function SyncBar(){
+ const C=window.Cloud;const [s,setS]=useState(C.status);const [novo,setNovo]=useState(false);
+ useEffect(()=>{const f=x=>setS(x);C.listeners.add(f);let t;const chk=async()=>{if(document.visibilityState==='visible'&&await C.checkNew())setNovo(true)};document.addEventListener('visibilitychange',chk);window.addEventListener('focus',chk);t=setInterval(chk,60000);return()=>{C.listeners.delete(f);document.removeEventListener('visibilitychange',chk);window.removeEventListener('focus',chk);clearInterval(t)}},[]);
+ useEffect(()=>{if(s&&s.indexOf('✓')>=0){const t=setTimeout(()=>setS(''),2500);return()=>clearTimeout(t)}},[s]);
+ if(novo)return html`<div className="fixed z-50 left-1/2 -translate-x-1/2 card flex items-center gap-3 text-sm" style=${{bottom:'calc(84px + env(safe-area-inset-bottom,0px))',padding:'10px 14px',boxShadow:'0 10px 30px -10px rgba(0,0,0,.4)'}}><span>Há alterações feitas noutro aparelho.</span><button className="btn" style=${{padding:'6px 12px'}} onClick=${async()=>{await C.pull();location.reload()}}>Atualizar</button></div>`;
+ if(!s)return null;
+ return html`<div className="fixed z-40 right-3 text-xs font-semibold px-3 py-1.5 rounded-full" style=${{bottom:'calc(84px + env(safe-area-inset-bottom,0px))',background:'var(--card)',border:'1px solid var(--bd)',color:s.indexOf('Erro')>=0?RED:'var(--mut)'}}>${s}</div>`}
+function Shell({children}){return html`<div className="min-h-screen flex items-center justify-center p-5"><div className="card w-full" style=${{maxWidth:420}}><div className="text-[11px] uppercase tracking-widest mut font-semibold">${loadCfg().empresa}</div><h1 className="text-2xl font-extrabold tracking-tight mb-4">Gestão de Obras</h1>${children}</div></div>`}
+function Setup({done}){
+ const [u,setU]=useState('');const [k,setK]=useState('');
+ return html`<${Shell}><div className="text-sm mut mb-3">Liga a app ao teu projeto Supabase para guardar os dados na nuvem e usá-los em vários aparelhos.</div>
+  <${F2} l="Project URL"><input className="inp" placeholder="https://xxxx.supabase.co" value=${u} onChange=${e=>setU(e.target.value)}/><//>
+  <div className="mt-2"><${F2} l="Chave anon / publishable"><input className="inp" value=${k} onChange=${e=>setK(e.target.value)}/><//></div>
+  <button className="btn w-full mt-4" onClick=${()=>{if(!u||!k)return;try{localStorage.setItem('hc-sb-conf',JSON.stringify({url:u,key:k}))}catch(e){};location.reload()}}>Ligar</button>
+  <button className="btn2 w-full mt-2" onClick=${()=>{try{localStorage.setItem('hc-local','1')}catch(e){};done()}}>Usar só neste aparelho</button><//>`}
+function Login({onIn}){
+ const [e,setE]=useState('');const [p,setP]=useState('');const [msg,setMsg]=useState('');const [busy,setBusy]=useState(false);
+ const C=window.Cloud;
+ const go=async novo=>{if(!e||!p){setMsg('Escreve o email e a palavra-passe.');return}setBusy(true);setMsg('');
+  try{const r=novo?await C.sb.auth.signUp({email:e.trim(),password:p}):await C.sb.auth.signInWithPassword({email:e.trim(),password:p});
+   if(r.error)throw r.error;
+   if(!r.data.session){setMsg('Conta criada. Confirma o email que recebeste e depois entra.');setBusy(false);return}
+   onIn(r.data.session)}catch(x){const m=(x&&x.message)||'';setMsg(/Invalid login/i.test(m)?'Email ou palavra-passe errados.':/already registered/i.test(m)?'Este email já tem conta. Usa "Entrar".':/Password should/i.test(m)?'A palavra-passe tem de ter pelo menos 6 caracteres.':/confirm/i.test(m)?'Confirma primeiro o teu email.':'Erro: '+m)}
+  setBusy(false)};
+ return html`<${Shell}>
+  <${F2} l="Email"><input className="inp" type="email" autoComplete="email" value=${e} onChange=${x=>setE(x.target.value)}/><//>
+  <div className="mt-2"><${F2} l="Palavra-passe"><input className="inp" type="password" autoComplete="current-password" value=${p} onChange=${x=>setP(x.target.value)} onKeyDown=${x=>x.key==='Enter'&&go(false)}/><//></div>
+  ${msg&&html`<div className="text-sm mt-3 font-semibold">${msg}</div>`}
+  <button className="btn w-full mt-4" disabled=${busy} onClick=${()=>go(false)}>${busy?'A entrar…':'Entrar'}</button>
+  <button className="btn2 w-full mt-2" disabled=${busy} onClick=${()=>go(true)}>Criar conta</button><//>`}
+function Root(){
+ const C=window.Cloud;
+ const [st,setSt]=useState('boot');const [err,setErr]=useState('');
+ const start=async session=>{setSt('boot');try{C.user=session.user;await C.pull();C.ready=true;setSt('app')}catch(x){setErr((x&&x.message)||'erro');setSt('erro')}};
+ useEffect(()=>{(async()=>{
+  let local=false;try{local=localStorage.getItem('hc-local')==='1'}catch(e){}
+  if(!C.init()){setSt(C.conf()?'erro':local?'app':'setup');if(C.conf())setErr('Não foi possível carregar o Supabase.');return}
+  const {data}=await C.sb.auth.getSession();if(data&&data.session)start(data.session);else setSt('login');
+  C.sb.auth.onAuthStateChange((ev)=>{if(ev==='SIGNED_OUT'&&C.ready)location.reload()});
+ })()},[]);
+ if(st==='boot')return html`<div className="min-h-screen flex items-center justify-center mut text-sm">A carregar…</div>`;
+ if(st==='setup')return html`<${Setup} done=${()=>setSt('app')}/>`;
+ if(st==='login')return html`<${Login} onIn=${start}/>`;
+ if(st==='erro')return html`<${Shell}><div className="text-sm">Não foi possível ligar à base de dados: <b>${err}</b></div><div className="text-xs mut mt-2">Confirma se correste o ficheiro supabase-setup.sql no Supabase e se o URL e a chave estão certos.</div><button className="btn w-full mt-4" onClick=${()=>location.reload()}>Tentar de novo</button><button className="btn2 w-full mt-2" onClick=${()=>{try{localStorage.removeItem('hc-sb-conf')}catch(e){};location.reload()}}>Mudar URL / chave</button><//>`;
+ return html`<${React.Fragment}><${App}/>${C.ready&&html`<${SyncBar}/>`}<//>`}
+
+ReactDOM.createRoot(document.getElementById('root')).render(html`<${Root}/>`);
+</script>
+</body>
+</html>
