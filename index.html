@@ -950,25 +950,37 @@ function OrcDoc({orc,base,obra,cfg,close,onPdf,msg}){
 /* ---- importar / simular leitura de fatura ---- */
 const SIMF=[['Cimentos do Norte','Cimento e argamassa',480,'Alvenaria'],['Eletro Sul','Material elétrico diverso',365.4,'Elétrico'],['Hidro Norte','Tubagem e acessórios',212.8,'Canalização'],['Cerâmicas Atlântico','Revestimento cerâmico',1290,'Acabamentos'],['Tintas do Vale','Tintas e rolos',174.5,'Acabamentos']];
 const ptDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')?s:new Date().toISOString().slice(0,10);
+/* leitura automática no servidor (Vercel /api/ler-fatura) */
+const b64=buf=>{let s='';const u=new Uint8Array(buf);for(let i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));return btoa(s)};
+async function prepFile(file){
+ if(/pdf/i.test(file.type)||/\.pdf$/i.test(file.name||'')){if(file.size>4e6)throw new Error('PDF demasiado grande (máx. 4 MB).');return {type:'application/pdf',data:b64(await file.arrayBuffer())}}
+ const url=URL.createObjectURL(file);
+ try{const img=await new Promise((ok,ko)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=()=>ko(new Error('Imagem não suportada.'));i.src=url});
+  const M=2000,k=Math.min(1,M/Math.max(img.naturalWidth,img.naturalHeight));const c=document.createElement('canvas');c.width=Math.round(img.naturalWidth*k);c.height=Math.round(img.naturalHeight*k);
+  const g=c.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.drawImage(img,0,0,c.width,c.height);
+  return {type:'image/jpeg',data:c.toDataURL('image/jpeg',.85).split(',')[1]}}finally{URL.revokeObjectURL(url)}}
+async function lerServidor(file){
+ const f=await prepFile(file);let tok='';
+ try{if(window.Cloud&&window.Cloud.sb){const {data}=await window.Cloud.sb.auth.getSession();tok=(data&&data.session&&data.session.access_token)||''}}catch(e){}
+ const r=await fetch('/api/ler-fatura',{method:'POST',headers:{'content-type':'application/json',...(tok?{authorization:'Bearer '+tok}:{})},body:JSON.stringify(f)});
+ let j=null;try{j=await r.json()}catch(e){}
+ if(!r.ok||!j)throw new Error((j&&j.erro)||('erro '+r.status));if(j.erro)throw new Error(j.erro);return j}
+const mapFat=(r,file)=>{const ivaV=r.iva_valor==null?null:num(r.iva_valor);let liq=num(r.liquido),tot=num(r.total);
+ let ivaP=r.iva_pct!=null?num(r.iva_pct):(liq&&ivaV!=null?ivaV/liq*100:23);
+ if(!liq&&tot)liq=tot/(1+ivaP/100);if(liq&&tot&&r.iva_pct==null&&ivaV==null)ivaP=(tot/liq-1)*100;
+ ivaP=Math.round(ivaP*100)/100;
+ return {forn:String(r.fornecedor||'').slice(0,80),data:ptDate(r.data),nf:String(r.numero||'').slice(0,40),artigo:String(r.artigo||(file.name||'Fatura importada').replace(/\.[^.]+$/,'')).slice(0,120),qtd:1,preco:Math.round(liq*100)/100,iva:ivaP,cat:CATS.includes(r.categoria)?r.categoria:'Outros',nif:r.nif_fornecedor||'',lido:'auto'}};
 async function lerFatura(file){
- const hoje=new Date().toISOString().slice(0,10);
- try{
-  if(/^image\//.test(file.type)){
-   const S=window.claude&&window.claude.use?await window.claude.use('sample'):null;
-   if(S){let ok=false;try{const L=await S.limits();ok=!!(L&&L.images)}catch(e){}
-    if(ok){const r=await S.json('Lê a fatura nesta imagem e responde só com JSON: {"fornecedor":string,"data":"AAAA-MM-DD","numero":string,"artigo":"descrição curta do que foi comprado","liquido":número sem IVA,"iva_pct":número,"total":número}. Usa null no que não estiver legível.',{images:[file],modelTier:'quick'});
-     if(r&&(num(r.total)||num(r.liquido))){const iva=r.iva_pct==null?23:num(r.iva_pct);const liq=num(r.liquido)||num(r.total)/(1+iva/100);
-      return {forn:String(r.fornecedor||'').slice(0,80),data:ptDate(r.data),nf:String(r.numero||'').slice(0,40),artigo:String(r.artigo||'Fatura importada').slice(0,120),qtd:1,preco:Math.round(liq*100)/100,iva,cat:'Outros',lido:'auto'}}}}
-  }
- }catch(e){}
- return {forn:'',data:hoje,nf:'',artigo:(file.name||'Fatura importada').replace(/\.[^.]+$/,''),qtd:1,preco:0,iva:23,cat:'Outros',lido:'manual'};
+ const hoje=new Date().toISOString().slice(0,10);let err='';
+ try{const r=await lerServidor(file);if(r&&(num(r.total)||num(r.liquido)))return mapFat(r,file);err='Não encontrei valores na fatura.'}catch(e){err=(e&&e.message)||'erro'}
+ return {forn:'',data:hoje,nf:'',artigo:(file.name||'Fatura importada').replace(/\.[^.]+$/,''),qtd:1,preco:0,iva:23,cat:'Outros',lido:'manual',err};
 }
 function ImportBtn({onAdd}){
  const ref=useRef(null);const [st,setSt]=useState('');
  const go=async f=>{if(!f)return;setSt('A ler a fatura…');
-  try{const [ler,att]=await Promise.all([lerFatura(f),saveAtt(f).catch(()=>null)]);onAdd({...ler,pago:false,anexo:att});setSt(ler.lido==='auto'?'Fatura lida. Confirma os valores.':'Fatura anexada. Preenche os valores.')}
+  try{const [ler,att]=await Promise.all([lerFatura(f),saveAtt(f).catch(()=>null)]);const {err,...row}=ler;onAdd({...row,pago:false,anexo:att});setSt(ler.lido==='auto'?'Fatura lida ✓ Confirma os valores.':'Não consegui ler ('+(err||'erro')+'). Fatura anexada: preenche os valores.')}
   catch(e){setSt('Não foi possível importar este ficheiro.')}
-  setTimeout(()=>setSt(''),6000)};
+  setTimeout(()=>setSt(''),9000)};
  return html`<span className="inline-flex items-center gap-2 flex-wrap"><input ref=${ref} type="file" accept="image/*,application/pdf" hidden onChange=${e=>{go(e.target.files[0]);e.target.value=''}}/><${IB} ic="upl" t="Importar fatura (PDF ou foto)" on=${()=>ref.current&&ref.current.click()}/>${st&&html`<span className="text-xs font-semibold" style=${{color:'var(--blue)'}}>${st}</span>`}</span>`}
 
 const KEYS=['dash','obras','orc','fat','mo','tar','base'];
