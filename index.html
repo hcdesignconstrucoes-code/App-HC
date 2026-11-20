@@ -37,9 +37,9 @@ window.Cloud=(function(){
  C.flush=async()=>{clearTimeout(C.timer);const ks=Object.keys(C.pending);if(!ks.length||!C.sb||!C.user)return;
   const rows=ks.map(k=>({user_id:C.user.id,key:k,value:C.pending[k],updated_at:new Date().toISOString()}));C.pending={};C.emit('A guardar…');
   const {error}=await C.sb.from('app_data').upsert(rows);
-  if(error){console.error('HC guardar',error);rows.forEach(r=>{if(!(r.key in C.pending))C.pending[r.key]=r.value});C.lastErr=(error.message||error.code||'erro')+(error.details?' · '+error.details:'')+(error.hint?' · '+error.hint:'')+' ['+rows.map(r=>r.key).join(', ')+']';C.emit('Erro a guardar: '+C.lastErr);C.timer=setTimeout(C.flush,8000)}
+  if(error){rows.forEach(r=>{if(!(r.key in C.pending))C.pending[r.key]=r.value});C.emit('Erro a guardar — nova tentativa…');C.timer=setTimeout(C.flush,5000)}
   else{rows.forEach(r=>{C.last[r.key]=r.updated_at});C.emit('Guardado na nuvem ✓')}};
- C.lastJ={};C.save=(k,v)=>{if(!C.ready||v===null||v===undefined)return;const j=JSON.stringify(v);if(C.lastJ[k]===j)return;C.lastJ[k]=j;C.pending[k]=v;clearTimeout(C.timer);C.timer=setTimeout(C.flush,900)};
+ C.lastJ={};C.save=(k,v)=>{if(!C.ready)return;const j=JSON.stringify(v);if(C.lastJ[k]===j)return;C.lastJ[k]=j;C.pending[k]=v;clearTimeout(C.timer);C.timer=setTimeout(C.flush,900)};
  C.checkNew=async()=>{if(!C.ready||Object.keys(C.pending).length)return false;try{const {data}=await C.sb.from('app_data').select('key,updated_at');return (data||[]).some(r=>C.last[r.key]&&Date.parse(r.updated_at)>Date.parse(C.last[r.key])+1)}catch(e){return false}};
  // anexos no Storage
  C.upload=async file=>{const id=Date.now()+'-'+Math.random().toString(36).slice(2,7);const safe=(file.name||'ficheiro').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9._-]+/g,'-');const path=C.user.id+'/'+id+'-'+safe;
@@ -1405,7 +1405,7 @@ function SyncBar(){
  useEffect(()=>{if(s&&s.indexOf('✓')>=0){const t=setTimeout(()=>setS(''),2500);return()=>clearTimeout(t)}},[s]);
  if(novo)return html`<div className="fixed z-50 left-1/2 -translate-x-1/2 card flex items-center gap-3 text-sm" style=${{bottom:'var(--sbb)',padding:'10px 14px',boxShadow:'0 10px 30px -10px rgba(0,0,0,.4)'}}><span>Há alterações feitas noutro aparelho.</span><button className="btn" style=${{padding:'6px 12px'}} onClick=${async()=>{await C.pull();location.reload()}}>Atualizar</button></div>`;
  if(!s)return null;
- return html`<div onClick=${()=>{try{navigator.clipboard.writeText(s)}catch(e){}}} title="Toca para copiar" className="fixed z-40 right-3 text-xs font-semibold px-3 py-1.5 rounded-2xl" style=${{maxWidth:'min(92vw,520px)',bottom:'var(--sbb)',background:'var(--card)',border:'1px solid var(--bd)',color:s.indexOf('Erro')>=0?RED:'var(--mut)'}}>${s}</div>`}
+ return html`<div className="fixed z-40 right-3 text-xs font-semibold px-3 py-1.5 rounded-full" style=${{bottom:'var(--sbb)',background:'var(--card)',border:'1px solid var(--bd)',color:s.indexOf('Erro')>=0?RED:'var(--mut)'}}>${s}</div>`}
 function Shell({children}){return html`<div className="min-h-screen flex items-center justify-center p-5"><div className="card w-full empty-in" style=${{maxWidth:420}}><img src=${LOGO} alt="HC" className="logo mx-auto mb-3" style=${{width:60,height:80}}/><div className="text-[11px] uppercase tracking-widest mut font-semibold text-center">${loadCfg().empresa}</div><h1 className="text-2xl font-extrabold tracking-tight text-center">Gestão de Obras</h1><div className="gline h-1 w-16 mx-auto mt-2 mb-5 rounded-full"></div>${children}</div></div>`}
 function Setup({done}){
  const [u,setU]=useState('');const [k,setK]=useState('');
