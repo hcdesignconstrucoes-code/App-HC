@@ -37,9 +37,9 @@ window.Cloud=(function(){
  C.flush=async()=>{clearTimeout(C.timer);const ks=Object.keys(C.pending);if(!ks.length||!C.sb||!C.user)return;
   const rows=ks.map(k=>({user_id:C.user.id,key:k,value:C.pending[k],updated_at:new Date().toISOString()}));C.pending={};C.emit('A guardar…');
   const {error}=await C.sb.from('app_data').upsert(rows);
-  if(error){rows.forEach(r=>{if(!(r.key in C.pending))C.pending[r.key]=r.value});C.emit('Erro a guardar — nova tentativa…');C.timer=setTimeout(C.flush,5000)}
+  if(error){console.error('HC guardar',error);rows.forEach(r=>{if(!(r.key in C.pending))C.pending[r.key]=r.value});C.lastErr=(error.message||error.code||'erro')+(error.details?' · '+error.details:'')+(error.hint?' · '+error.hint:'')+' ['+rows.map(r=>r.key).join(', ')+']';C.emit('Erro a guardar: '+C.lastErr);C.timer=setTimeout(C.flush,8000)}
   else{rows.forEach(r=>{C.last[r.key]=r.updated_at});C.emit('Guardado na nuvem ✓')}};
- C.lastJ={};C.save=(k,v)=>{if(!C.ready)return;const j=JSON.stringify(v);if(C.lastJ[k]===j)return;C.lastJ[k]=j;C.pending[k]=v;clearTimeout(C.timer);C.timer=setTimeout(C.flush,900)};
+ C.lastJ={};C.save=(k,v)=>{if(!C.ready||v===null||v===undefined)return;const j=JSON.stringify(v);if(C.lastJ[k]===j)return;C.lastJ[k]=j;C.pending[k]=v;clearTimeout(C.timer);C.timer=setTimeout(C.flush,900)};
  C.checkNew=async()=>{if(!C.ready||Object.keys(C.pending).length)return false;try{const {data}=await C.sb.from('app_data').select('key,updated_at');return (data||[]).some(r=>C.last[r.key]&&Date.parse(r.updated_at)>Date.parse(C.last[r.key])+1)}catch(e){return false}};
  // anexos no Storage
  C.upload=async file=>{const id=Date.now()+'-'+Math.random().toString(36).slice(2,7);const safe=(file.name||'ficheiro').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9._-]+/g,'-');const path=C.user.id+'/'+id+'-'+safe;
@@ -1405,7 +1405,7 @@ function SyncBar(){
  useEffect(()=>{if(s&&s.indexOf('✓')>=0){const t=setTimeout(()=>setS(''),2500);return()=>clearTimeout(t)}},[s]);
  if(novo)return html`<div className="fixed z-50 left-1/2 -translate-x-1/2 card flex items-center gap-3 text-sm" style=${{bottom:'var(--sbb)',padding:'10px 14px',boxShadow:'0 10px 30px -10px rgba(0,0,0,.4)'}}><span>Há alterações feitas noutro aparelho.</span><button className="btn" style=${{padding:'6px 12px'}} onClick=${async()=>{await C.pull();location.reload()}}>Atualizar</button></div>`;
  if(!s)return null;
- return html`<div className="fixed z-40 right-3 text-xs font-semibold px-3 py-1.5 rounded-full" style=${{bottom:'var(--sbb)',background:'var(--card)',border:'1px solid var(--bd)',color:s.indexOf('Erro')>=0?RED:'var(--mut)'}}>${s}</div>`}
+ return html`<div onClick=${()=>{try{navigator.clipboard.writeText(s)}catch(e){}}} title="Toca para copiar" className="fixed z-40 right-3 text-xs font-semibold px-3 py-1.5 rounded-2xl" style=${{maxWidth:'min(92vw,520px)',bottom:'var(--sbb)',background:'var(--card)',border:'1px solid var(--bd)',color:s.indexOf('Erro')>=0?RED:'var(--mut)'}}>${s}</div>`}
 function Shell({children}){return html`<div className="min-h-screen flex items-center justify-center p-5"><div className="card w-full empty-in" style=${{maxWidth:420}}><img src=${LOGO} alt="HC" className="logo mx-auto mb-3" style=${{width:60,height:80}}/><div className="text-[11px] uppercase tracking-widest mut font-semibold text-center">${loadCfg().empresa}</div><h1 className="text-2xl font-extrabold tracking-tight text-center">Gestão de Obras</h1><div className="gline h-1 w-16 mx-auto mt-2 mb-5 rounded-full"></div>${children}</div></div>`}
 function Setup({done}){
  const [u,setU]=useState('');const [k,setK]=useState('');
@@ -1428,7 +1428,17 @@ function Login({onIn}){
   <div className="mt-2"><${F2} l="Palavra-passe"><input className="inp" type="password" autoComplete="current-password" value=${p} onChange=${x=>setP(x.target.value)} onKeyDown=${x=>x.key==='Enter'&&go(false)}/><//></div>
   ${msg&&html`<div className="text-sm mt-3 font-semibold">${msg}</div>`}
   <button className="btn w-full mt-4" disabled=${busy} onClick=${()=>go(false)}>${busy?'A entrar…':'Entrar'}</button>
-  <button className="btn2 w-full mt-2" disabled=${busy} onClick=${()=>go(true)}>Criar conta</button><//>`}
+  <button className="btn2 w-full mt-2" disabled=${busy} onClick=${()=>go(true)}>Criar conta</button>
+  <button className="w-full mt-3 text-sm font-semibold" style=${{color:'var(--blue)'}} disabled=${busy} onClick=${async()=>{if(!e.trim()){setMsg('Escreve o teu email em cima e carrega outra vez aqui.');return}setBusy(true);setMsg('');try{const r=await C.sb.auth.resetPasswordForEmail(e.trim(),{redirectTo:location.origin+location.pathname});if(r.error)throw r.error;setMsg('Enviámos um email para '+e.trim()+'. Abre o link desse email neste aparelho para escolheres uma palavra-passe nova.')}catch(x){setMsg('Não foi possível enviar: '+((x&&x.message)||'erro'))}setBusy(false)}}>Esqueci-me da palavra-passe</button><//>`}
+function NovaPass({done}){
+ const [p1,setP1]=useState('');const [p2,setP2]=useState('');const [msg,setMsg]=useState('');const [busy,setBusy]=useState(false);const C=window.Cloud;
+ const go=async()=>{if(p1.length<6){setMsg('A palavra-passe tem de ter pelo menos 6 caracteres.');return}if(p1!==p2){setMsg('As duas palavras-passe não são iguais.');return}
+  setBusy(true);try{const r=await C.sb.auth.updateUser({password:p1});if(r.error)throw r.error;try{history.replaceState(null,'',location.pathname)}catch(e){};const {data}=await C.sb.auth.getSession();done(data&&data.session)}catch(x){setMsg('Erro: '+((x&&x.message)||'tenta outra vez'))}setBusy(false)};
+ return html`<${Shell}><div className="text-sm mut mb-3 text-center">Escolhe uma palavra-passe nova.</div>
+  <${F2} l="Nova palavra-passe"><input className="inp" type="password" autoComplete="new-password" value=${p1} onChange=${e=>setP1(e.target.value)}/><//>
+  <div className="mt-2"><${F2} l="Repetir"><input className="inp" type="password" autoComplete="new-password" value=${p2} onChange=${e=>setP2(e.target.value)} onKeyDown=${e=>e.key==='Enter'&&go()}/><//></div>
+  ${msg&&html`<div className="text-sm mt-3 font-semibold">${msg}</div>`}
+  <button className="btn w-full mt-4" disabled=${busy} onClick=${go}>${busy?'A guardar…':'Guardar e entrar'}</button><//>`}
 function Root(){
  const C=window.Cloud;
  const [st,setSt]=useState('boot');const [err,setErr]=useState('');
@@ -1436,12 +1446,14 @@ function Root(){
  useEffect(()=>{(async()=>{
   let local=false;try{local=localStorage.getItem('hc-local')==='1'}catch(e){}
   if(!C.init()){setSt(C.conf()?'erro':local?'app':'setup');if(C.conf())setErr('Não foi possível carregar o Supabase.');return}
-  const {data}=await C.sb.auth.getSession();if(data&&data.session)start(data.session);else setSt('login');
-  C.sb.auth.onAuthStateChange((ev)=>{if(ev==='SIGNED_OUT'&&C.ready)location.reload()});
+  const rec=/type=recovery/.test(location.hash||'')||/type=recovery/.test(location.search||'');
+  C.sb.auth.onAuthStateChange((ev)=>{if(ev==='PASSWORD_RECOVERY')setSt('nova');if(ev==='SIGNED_OUT'&&C.ready)location.reload()});
+  const {data}=await C.sb.auth.getSession();if(rec){setSt('nova');return}if(data&&data.session)start(data.session);else setSt('login');
  })()},[]);
  if(st==='boot')return html`<div className="min-h-screen flex items-center justify-center mut text-sm">A carregar…</div>`;
  if(st==='setup')return html`<${Setup} done=${()=>setSt('app')}/>`;
  if(st==='login')return html`<${Login} onIn=${start}/>`;
+ if(st==='nova')return html`<${NovaPass} done=${ss=>ss?start(ss):setSt('login')}/>`;
  if(st==='erro')return html`<${Shell}><div className="text-sm">Não foi possível ligar à base de dados: <b>${err}</b></div><div className="text-xs mut mt-2">Confirma se correste o ficheiro supabase-setup.sql no Supabase e se o URL e a chave estão certos.</div><button className="btn w-full mt-4" onClick=${()=>location.reload()}>Tentar de novo</button><button className="btn2 w-full mt-2" onClick=${()=>{try{localStorage.removeItem('hc-sb-conf')}catch(e){};location.reload()}}>Mudar URL / chave</button><//>`;
  return html`<${React.Fragment}><${App}/>${C.ready&&html`<${SyncBar}/>`}<//>`}
 
