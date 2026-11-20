@@ -931,12 +931,43 @@ function CapPage({cp,ci,R,orc,cfg,back,edit}){
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs mt-2">${[['Material / un.',eur(t.c.D)],['Mão-de-obra / un.',eur(t.c.H)],['Preço venda / un.',eur(t.c.R)],['Custo total',eur(t.c.custo)],['Total venda',eur(t.c.Y)],['Margem',html`<span style=${{color:m<0?RED:'inherit'}}>${eur(m)} · ${pf(t.c.T)}</span>`]].map(a=>html`<div key=${a[0]} className="rounded-lg p-2" style=${{background:'var(--inp)'}}><div className="mut">${a[0]}</div><b>${a[1]}</b></div>`)}</div></div>`})}</div>`:html`<div className="text-sm mut">Este capítulo ainda não tem trabalhos.</div>`}<//>
  </div>`}
 
-function Orcamentos({orcs,obras,base,cfg,open,criar}){
+/* ---- importar orçamento (PDF, Excel, CSV ou foto) ---- */
+const isSheet=f=>/\.(xlsx|xlsm|xls|csv|ods)$/i.test(f.name||'')||/spreadsheet|excel|csv|opendocument/i.test(f.type||'');
+function loadXLSX(){return new Promise((ok,ko)=>{if(window.XLSX)return ok(window.XLSX);const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=()=>window.XLSX?ok(window.XLSX):ko(new Error('Leitor de Excel não carregou.'));s.onerror=()=>ko(new Error('Não foi possível carregar o leitor de Excel.'));document.head.appendChild(s)})}
+async function sheetText(file){if(/\.csv$/i.test(file.name||'')||/text\/csv/i.test(file.type||''))return (await file.text()).slice(0,180000);
+ const X=await loadXLSX();const wb=X.read(await file.arrayBuffer(),{type:'array'});
+ return wb.SheetNames.map(n=>'### Folha: '+n+'\n'+X.utils.sheet_to_csv(wb.Sheets[n],{FS:';',blankrows:false})).join('\n\n').slice(0,180000)}
+const capMatch=(n,caps)=>{const t=normTxt(n).replace(/[^a-z0-9]+/g,' ').trim();if(!t)return '';const e=caps.find(c=>normTxt(c).replace(/[^a-z0-9]+/g,' ').trim()===t);if(e)return e;const p=caps.find(c=>{const cc=normTxt(c).replace(/[^a-z0-9]+/g,' ').trim();return cc&&(t.includes(cc)||cc.includes(t))});return p||''};
+function orcFromAI(r,base){
+ const o=newOrc(base,null);o.nome=String(r.nome||r.cliente||'Orçamento importado').slice(0,120);o.morada=String(r.morada||'').slice(0,200);o.descricao=String(r.descricao||'').slice(0,1000);if(r.notas)o.notas=String(r.notas).slice(0,4000);
+ const out=[];let n=0;
+ (Array.isArray(r.capitulos)?r.capitulos:[]).forEach(c=>{const nome=capMatch(c&&c.nome,base.caps)||String((c&&c.nome)||'Outros').slice(0,60);let cap=out.find(x=>x.nome===nome);if(!cap){cap={id:uid(),nome,itens:[]};out.push(cap)}
+  (Array.isArray(c&&c.itens)?c.itens:[]).forEach(it=>{if(!it||!String(it.descricao||'').trim())return;const q=num(it.quantidade)||1;let pu=num(it.preco_unitario);if(!pu&&num(it.total))pu=num(it.total)/q;
+   const esp=base.espacos.find(e=>normTxt(e)===normTxt(it.espaco||''))||capMatch(it.espaco||'',base.espacos)||'Geral';const un=UNMAP(it.unidade||'');
+   cap.itens.push({id:uid(),espaco:esp,descr:String(it.descricao).slice(0,3000),un:['UN','M2','M3','ML','KG','L','VG'].includes(un)?un:(un||'UN'),qt:q,mat:num(it.custo_material)||0,mo:num(it.custo_mao_obra)||0,sub:false,rman:pu?Math.round(pu*100)/100:''});n++})});
+ o.caps=base.caps.map(nm=>out.find(c=>c.nome===nm)||{id:uid(),nome:nm,itens:[]}).concat(out.filter(c=>!base.caps.includes(c.nome)));
+ return {o,n}}
+function ImportOrcBtn({base,importar}){
+ const ref=useRef(null);const [busy,setBusy]=useState(false);const [msg,setMsg]=useState('');
+ const go=async f=>{if(!f)return;setBusy(true);setMsg('');try{const r=await lerOrcamento(f,base);if(r&&r.erro)throw new Error(r.erro);const {o,n}=orcFromAI(r||{},base);if(!n)throw new Error('Não encontrei trabalhos neste ficheiro.');importar(o)}catch(e){setMsg((e&&e.message)||'Não foi possível ler o ficheiro.');setTimeout(()=>setMsg(''),9000)}setBusy(false)};
+ return html`<span className="inline-flex items-center gap-2 flex-wrap"><input ref=${ref} type="file" accept=".pdf,.xlsx,.xlsm,.xls,.csv,.ods,image/*,application/pdf" hidden onChange=${e=>{go(e.target.files[0]);e.target.value=''}}/>
+  <${IB} ic="upl" t="Importar orçamento (PDF, Excel ou foto)" txt="Importar" on=${()=>!busy&&ref.current&&ref.current.click()}/>
+  ${msg&&html`<span key=${msg} className="text-xs font-semibold st-msg" style=${{color:RED}}>${msg}</span>`}
+  ${busy&&html`<div className="fixed inset-0 z-[60] flex items-center justify-center" style=${{background:'rgba(0,0,0,.45)'}}><div className="card text-center" style=${{padding:'22px 26px',maxWidth:320}}><div className="hcspin mx-auto mb-3"></div><b>A ler o orçamento…</b><div className="text-xs mut mt-1">Pode demorar até um minuto em orçamentos grandes.</div></div></div>`}</span>`}
+async function lerOrcamento(file,base){let body;
+ if(isSheet(file))body={text:await sheetText(file),nome:file.name};
+ else if(/pdf/i.test(file.type)||/\.pdf$/i.test(file.name||'')){if(file.size>4e6)throw new Error('PDF demasiado grande (máx. 4 MB).');body={type:'application/pdf',data:b64(await file.arrayBuffer())}}
+ else body=await prepFile(file);
+ body.caps=base.caps;body.espacos=base.espacos;let tok='';
+ try{if(window.Cloud&&window.Cloud.sb){const {data}=await window.Cloud.sb.auth.getSession();tok=(data&&data.session&&data.session.access_token)||''}}catch(e){}
+ const r=await fetch('/api/ler-orcamento',{method:'POST',headers:{'content-type':'application/json',...(tok?{authorization:'Bearer '+tok}:{})},body:JSON.stringify(body)});
+ let j=null;try{j=await r.json()}catch(e){}if(!r.ok||!j)throw new Error((j&&j.erro)||(r.status===504?'Demorou demasiado. Experimenta dividir o orçamento.':'erro '+r.status));return j}
+function Orcamentos({orcs,obras,base,cfg,open,criar,importar}){
  const [q,setQ]=useState('');
  const nm=id=>(obras.find(o=>o.id===id)||{}).cliente;
  const rows=orcs.filter(o=>(o.nome+' '+(nm(o.obra)||'')+' '+o.morada).toLowerCase().includes(q.toLowerCase()));
  return html`<div className="space-y-3">
-  <div className="flex flex-wrap gap-2 items-center"><input className="inp" style=${{flex:'1 1 200px',maxWidth:280}} placeholder="Pesquisar orçamento, cliente ou morada…" value=${q} onChange=${e=>setQ(e.target.value)}/><div className="flex-1"></div><${IB} ic="plus" t="Novo orçamento" pri=${true} txt="Orçamento" on=${()=>criar(0)}/></div>
+  <div className="flex flex-wrap gap-2 items-center"><input className="inp" style=${{flex:'1 1 200px',maxWidth:280}} placeholder="Pesquisar orçamento, cliente ou morada…" value=${q} onChange=${e=>setQ(e.target.value)}/><div className="flex-1"></div><${ImportOrcBtn} base=${base} importar=${importar}/><${IB} ic="plus" t="Novo orçamento" pri=${true} txt="Orçamento" on=${()=>criar(0)}/></div>
   <div className="space-y-2">${rows.map(o=>{const R=orcCalc(o,base);return html`<button key=${o.id} className="card w-full text-left" style=${{padding:'12px 14px'}} onClick=${()=>open(o.id)}>
    <div className="flex items-start gap-3"><div className="flex-1 min-w-0"><div className="font-semibold">${o.nome}</div><div className="text-xs mut">${nm(o.obra)?nm(o.obra)+' · ':''}versão ${o.versao} · categoria ${o.cat} · ${o.data}</div></div>
     <div className="text-right"><div className="font-bold">${eur(R.tot)}</div><div className="text-xs mut">sem IVA · margem ${pf(R.margP)}</div></div><span className="mut">›</span></div></button>`})}</div>
@@ -1350,6 +1381,7 @@ function App(){
  const set=p=>setCfg(c=>({...c,...p}));
  const openOrc=id=>{setTab0('orc');setOrcDet(id);setMais(false);try{window.scrollTo(0,0)}catch(e){}};
  const criarOrc=(obraId)=>{let ob=obras.find(o=>o.id===obraId);let o=newOrc(base,ob);if(!ob){const id=Math.max(0,...obras.map(x=>x.id))+1;ob={id,cliente:o.nome,morada:o.morada||'',orc:0,recebido:0,estado:'Planeada',inicio:new Date().toISOString().slice(0,10),fim:'',notas:o.descricao||'',auto:o.id};o={...o,obra:id};setObras([ob,...obras])}setOrcs([o,...orcs]);openOrc(o.id)};
+ const importarOrc=o0=>{const id=Math.max(0,...obras.map(x=>x.id))+1;const t=Math.round(orcCalc(o0,base).tot*100)/100;const ob={id,cliente:o0.nome,morada:o0.morada||'',orc:t,recebido:0,estado:'Planeada',inicio:new Date().toISOString().slice(0,10),fim:'',notas:o0.descricao||'',auto:o0.id};const o={...o0,obra:id};setObras([ob,...obras]);setOrcs([o,...orcs]);openOrc(o.id)};
  const soltarObra=id=>{setMats(m=>m.map(x=>x.obra===id?{...x,obra:0,item:''}:x));setMos(m=>m.map(x=>x.obra===id?{...x,obra:0,item:''}:x));setTars(t=>t.filter(x=>x.obra!==id))};
  useEffect(()=>{const r=document.documentElement;
   r.style.setProperty('--blue',cfg.azul);r.style.setProperty('--gold',cfg.ouro);r.style.setProperty('--r',cfg.raio+'px');r.style.setProperty('--pad',cfg.dens==='comp'?'12px':'18px');
@@ -1376,7 +1408,7 @@ function App(){
    ${tab==='dash'&&html`<${Dashboard} obras=${obras} mats=${mats} mos=${mos} gasto=${gasto} cfg=${V} tars=${tars} open=${openObra} go=${(k,fl)=>{window.__hcFiltro={[k]:fl};setTab(k);try{window.scrollTo(0,0)}catch(e){}}}/>`}
    ${tab==='obras'&&det===0&&html`<${Obras} obras=${obras} setObras=${setObras} gasto=${gasto} mats=${mats} mos=${mos} cfg=${V} tars=${tars} open=${openObra}/>`}
    ${tab==='obras'&&det>0&&obras.find(o=>o.id===det)&&html`<${ObraPage} orcs=${orcs} base=${base} criarOrc=${criarOrc} openOrc=${openOrc} o=${obras.find(o=>o.id===det)} obras=${obras} setObras=${setObras} mats=${mats} setMats=${setMats} mos=${mos} tars=${tars} setTars=${setTars} cfg=${V} gasto=${gasto} back=${()=>setDet(0)}/>`}
-   ${tab==='orc'&&!orcDet&&html`<${Orcamentos} orcs=${orcs} obras=${obras} base=${base} cfg=${V} open=${openOrc} criar=${criarOrc}/>`}
+   ${tab==='orc'&&!orcDet&&html`<${Orcamentos} orcs=${orcs} obras=${obras} base=${base} cfg=${V} open=${openOrc} criar=${criarOrc} importar=${importarOrc}/>`}
    ${tab==='orc'&&orcDet&&orcs.find(o=>o.id===orcDet)&&html`<${OrcPage} soltar=${soltarObra} orc=${orcs.find(o=>o.id===orcDet)} orcs=${orcs} setOrcs=${setOrcs} obras=${obras} setObras=${setObras} base=${base} setBase=${setBase} cfg=${V} back=${()=>setOrcDet('')} openOrc=${openOrc} goBase=${()=>setTab('base')}/>`}
    ${tab==='base'&&html`<${Base} base=${base} setBase=${setBase} cfg=${V}/>`}
    ${tab==='tar'&&html`<${Tarefas} tars=${tars} setTars=${setTars} obras=${obras} cfg=${V}/>`}
