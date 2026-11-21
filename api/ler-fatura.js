@@ -19,6 +19,8 @@ Lê esta fatura e responde APENAS com um objeto JSON, sem texto à volta, neste 
  "iva_pct": taxa de IVA em % (se houver várias taxas, a média ponderada = iva_valor/liquido*100),
  "total": número total a pagar com IVA,
  "categoria": uma de ${JSON.stringify(CATS)} conforme o tipo de material,
+ "despesa_fixa": true se for fatura de água, eletricidade/luz, gás, telecomunicações/internet/telemóvel, seguro, renda, contabilidade, software/subscrição ou leasing/crédito (despesas da empresa e não de uma obra), senão false,
+ "categoria_fixa": uma de ["Água","Eletricidade","Gás","Renda / Armazém","Viaturas","Combustível","Seguros","Telecomunicações","Contabilidade","Software","Salários","Segurança Social / Impostos","Créditos / Leasing","Ferramentas / Aluguer","Outros"] ou null,
  "linhas": [{"descricao": "nome do produto tal como na fatura", "referencia": "código/ref. ou null", "quantidade": número, "unidade": "UN, M2, ML, KG, L, CX, PACK, SACO, ROLO…", "preco_unitario": preço de UMA unidade de venda sem IVA e já com descontos (total da linha ÷ quantidade), "total_linha": número sem IVA, "capitulo": "capítulo da obra a que o produto pertence (usa um da lista de capítulos indicada) ou null", "ferramenta": true se for uma ferramenta ou utensílio de trabalho (berbequim, martelo, broca, disco de corte, talocha, trincha…), senão false}],
  "referencias": ["todos os nomes, palavras de referência, localidades, designações de obra e notas escritos na fatura que NÃO sejam do fornecedor"],
  "obra_id": id da obra correspondente (ver lista abaixo) ou null
