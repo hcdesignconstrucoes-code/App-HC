@@ -232,7 +232,7 @@ const html=htm.bind(React.createElement);
 const eurS=v=>new Intl.NumberFormat('pt-PT',{style:'currency',currency:'EUR'}).format(v||0);
 const eur=v=>{const s=eurS(v),i=s.lastIndexOf(','),m=i<0?null:s.slice(i+1).match(/^(\d+)(.*)$/);if(!m)return s;return html`<span style=${{whiteSpace:'nowrap'}}>${s.slice(0,i)}<span style=${{fontSize:'.68em',opacity:.7}}>,${m[1]}</span>${m[2]}</span>`};
 const CATS=['Alvenaria','Elétrico','Canalização','Acabamentos','Outros'];
-const num=v=>parseFloat(v)||0;
+const num=v=>parseFloat(v)||0;const toNum=v=>typeof v==='number'?v:parseFloat(String(v||'').replace(/\s|€/g,'').replace(/\.(?=\d{3}(\D|$))/g,'').replace(',','.'))||0;
 const OBRAS0=[
  {id:1,cliente:'Família Silva',morada:'Rua das Flores 24, Porto',orc:85000,recebido:45000,estado:'Em curso'},
  {id:2,cliente:'Marta Ferreira',morada:'Av. da Liberdade 112, Lisboa',orc:52000,recebido:30000,estado:'Em curso'},
@@ -1074,7 +1074,7 @@ function PricePicker({base,tipo,onPick,close}){
   <div className="space-y-2">${list.map(p=>html`<div key=${p.id} className="card flex items-center gap-3" style=${{padding:'10px 12px'}}>
    <div className="flex-1 min-w-0"><div className="font-semibold text-sm">${p.nome}</div><div className="text-xs mut">${p.tipo}${p.cap?' · '+p.cap:''}${p.forn?' · '+p.forn:''}${p.data?' · '+fdate(p.data):''}</div></div>
    <div className="text-right text-sm"><b>${eur(p.preco)}</b><div className="text-xs mut">/ ${p.un}</div></div>
-   <div className="flex flex-col gap-1"><button className="btn" style=${{padding:'4px 10px',fontSize:12}} onClick=${()=>{onPick(p.preco,false);close()}}>Usar</button><${IB} ic="plus" t="Somar ao valor atual" on=${()=>{onPick(p.preco,true);close()}}/></div></div>`)}</div>
+   <div className="flex flex-col gap-1"><button className="btn" style=${{padding:'4px 10px',fontSize:12}} onClick=${()=>{onPick(p,false);close()}}>Usar</button><${IB} ic="plus" t="Somar ao valor atual" on=${()=>{onPick(p,true);close()}}/></div></div>`)}</div>
   ${!list.length&&html`<div className="text-sm mut text-center py-6">Nenhum preço encontrado. Podes criar preços na aba Base de dados.</div>`}
  <//>`}
 
@@ -1086,7 +1086,8 @@ function OrcItem({it,n,P,base,setBase,upd,del,dup,mv,cfg}){
  const unOpts=base.unidades.map(u=>u[0]);if(it.un&&!unOpts.includes(it.un))unOpts.push(it.un);
  const esp=base.espacos.slice();if(it.espaco&&!esp.includes(it.espaco))esp.push(it.espaco);
  const saveTxt=()=>setBase({...base,textos:[{id:uid(),cod:'',tipo:it.espaco||'Geral',cap:'',descr:it.descr,un:it.un||'VG',qt:it.qt||1,mat:it.mat||0,mo:it.mo||0,sub:!!it.sub},...base.textos]});
- const [saved,setSaved]=useState(false);
+ const [saved,setSaved]=useState(false);const q=num(it.qt);
+ const RefHint=k=>{const r=it[k+'Ref'];const v=num(it[k]);if(!v)return null;const bad=(r||[]).filter(x=>x.un&&it.un&&x.un!==it.un);return html`<div className="text-xs mt-1" style=${{lineHeight:1.4}}>${r&&r.length?html`<span className="mut">${r.map(x=>x.nome).join(' + ')}: </span>`:null}<b>${eur(v)} × ${q} ${it.un} = ${eur(v*q)}</b>${bad.length?html`<div style=${{color:RED}}>Atenção: o preço está em ${bad[0].un} e este trabalho está em ${it.un}. Muda a unidade do trabalho ou confirma a quantidade.</div>`:null}</div>`};
  const Cell=(l,v,s)=>html`<div key=${l} className="py-1.5" style=${{borderBottom:'1px solid var(--bd)'}}><div className="flex justify-between gap-3 text-sm"><span className="mut">${l}</span><b>${v}</b></div>${s&&html`<div className="text-[11px] mut text-right">${s}</div>`}</div>`;
  return html`<div className="card" style=${{padding:0}}>
   <button className="w-full text-left flex items-start gap-3" style=${{padding:'12px 14px'}} onClick=${()=>setX(!x)}>
@@ -1103,8 +1104,8 @@ function OrcItem({it,n,P,base,setBase,upd,del,dup,mv,cfg}){
     <${F2} l="Subcontratada"><label className="flex items-center gap-2 text-sm" style=${{minHeight:34}}><input type="checkbox" checked=${!!it.sub} onChange=${e=>set('sub',e.target.checked)}/>Sim (X)</label><//>
    </div>
    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-    <${F2} l="Custo do material (€ por unidade)"><div className="flex gap-1"><${NumIn} v=${it.mat} on=${v=>set('mat',v)}/><button className="btn2" style=${{padding:'0 12px',whiteSpace:'nowrap'}} onClick=${()=>setPk('mat')}>Tabela</button></div><//>
-    <${F2} l="Custo da mão-de-obra (€ por unidade)"><div className="flex gap-1"><${NumIn} v=${it.mo} on=${v=>set('mo',v)}/><button className="btn2" style=${{padding:'0 12px',whiteSpace:'nowrap'}} onClick=${()=>setPk('mo')}>Tabela</button></div><//>
+    <${F2} l="Custo do material (€ por unidade)"><div className="flex gap-1"><${NumIn} v=${it.mat} on=${v=>set({mat:v,matRef:null})}/><button className="btn2" style=${{padding:'0 12px',whiteSpace:'nowrap'}} onClick=${()=>setPk('mat')}>Tabela</button></div>${RefHint('mat')}<//>
+    <${F2} l="Custo da mão-de-obra (€ por unidade)"><div className="flex gap-1"><${NumIn} v=${it.mo} on=${v=>set({mo:v,moRef:null})}/><button className="btn2" style=${{padding:'0 12px',whiteSpace:'nowrap'}} onClick=${()=>setPk('mo')}>Tabela</button></div>${RefHint('mo')}<//>
    </div>
    <div className="mt-4 p-3 rounded-xl" style=${{background:'var(--inp)',border:'1px solid var(--bd)'}}>
     <div className="text-[11px] uppercase tracking-widest mut font-semibold mb-1">Cálculo automático por unidade</div>
@@ -1114,6 +1115,7 @@ function OrcItem({it,n,P,base,setBase,upd,del,dup,mv,cfg}){
     ${Cell('Margem material + mão-de-obra',eur(c.N),c.L?pf(P.mm)+' sobre o custo conjunto':'só se houver material e mão-de-obra')}
     ${Cell('Custos indiretos',eur(c.ind),pf(P.ind))}
     ${Cell('Buffer',eur(c.buf),pf(P.buf))}
+    ${q!==1&&(num(it.mat)||num(it.mo))?html`<div className="mt-2 pt-2" style=${{borderTop:'2px solid var(--bd)'}}><div className="text-[11px] uppercase tracking-widest mut font-semibold mb-1">Contas para ${q} ${it.un}</div>${num(it.mat)?Cell('Material (custo)',eur(num(it.mat)*q),eur(num(it.mat))+' × '+q+' '+it.un):null}${num(it.mo)?Cell('Mão-de-obra (custo)',eur(num(it.mo)*q),eur(num(it.mo))+' × '+q+' '+it.un):null}${Cell('Custo total',eur((num(it.mat)+num(it.mo))*q))}</div>`:null}
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3 items-end">
      <${F2} l=${c.man?'Preço unitário de venda (manual)':'Preço unitário de venda (automático)'}><div className="flex gap-1"><${NumIn} v=${c.R} blank=${true} on=${v=>set('rman',v)}/>${c.man&&html`<button className="btn2" style=${{padding:'0 12px',whiteSpace:'nowrap'}} onClick=${()=>set('rman','')}>Repor</button>`}</div><//>
      <div className="text-sm text-right md:pb-2"><div className="mut">Margem <b style=${{color:'var(--fg)'}}>${eur(c.S)} · ${pf(c.T)}</b></div><div className="font-extrabold text-lg">Total da linha ${eur(c.Y)}</div></div></div>
@@ -1121,7 +1123,7 @@ function OrcItem({it,n,P,base,setBase,upd,del,dup,mv,cfg}){
    <div className="flex flex-wrap gap-2 justify-between mt-3"><div className="flex gap-2"><${IB} ic="up" t="Subir" on=${()=>mv(-1)}/><${IB} ic="down" t="Descer" on=${()=>mv(1)}/><${IB} ic="copy" t="Duplicar" on=${dup}/></div><${ConfDel} t="Apagar linha" on=${del}/></div>
   </div>`}
   ${pk==='texto'&&html`<${TextPicker} base=${base} close=${()=>setPk(null)} onPick=${t=>{const p={descr:t.descr,un:t.un||it.un,qt:t.qt||it.qt};if(t.tipo)p.espaco=t.tipo;if(num(t.mat))p.mat=t.mat;if(num(t.mo))p.mo=t.mo;if(t.sub)p.sub=true;set(p)}}/>`}
-  ${(pk==='mat'||pk==='mo')&&html`<${PricePicker} base=${base} tipo=${pk==='mat'?'Material':'Mão-de-obra'} close=${()=>setPk(null)} onPick=${(v,add)=>set(pk,add?num(it[pk])+v:v)}/>`}
+  ${(pk==='mat'||pk==='mo')&&html`<${PricePicker} base=${base} tipo=${pk==='mat'?'Material':'Mão-de-obra'} close=${()=>setPk(null)} onPick=${(p,add)=>{const v=toNum(p.preco);const prev=add&&it[pk+'Ref']?it[pk+'Ref']:[];set({[pk]:Math.round(((add?num(it[pk]):0)+v)*100)/100,[pk+'Ref']:[...prev,{nome:p.nome,un:p.un,preco:v}]})}}/>`}
  </div>`}
 
 /* ---- orçamento: página completa ---- */
