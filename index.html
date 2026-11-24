@@ -930,8 +930,9 @@ MAT0[1].anexo=SAMPLE_ATT;MAT0[0].item='i-alv';MAT0[1].item='i-alv';MO0[0].item='
 const parOf=(base,cat)=>(base.params&&base.params[cat])||{mat:0,mo:0,mm:0,ind:0,buf:0,forn:0,sub:0};
 function calcItem(it,P){
  const D=num(it.mat),H=num(it.mo),qt=num(it.qt),sub=!!it.sub;
- const E=(H===0||sub)?P.forn:P.mat,F=D+D*E;
- const J=sub?P.sub:P.mo,K=H+H*J;
+ const ov=k=>it[k]!==''&&it[k]!=null&&!isNaN(+it[k]);
+ const E=ov('pMat')?+it.pMat:(H===0||sub)?P.forn:P.mat,F=D+D*E;
+ const J=ov('pMo')?+it.pMo:sub?P.sub:P.mo,K=H+H*J;
  const L=(D===0||H===0)?0:D+H,N=P.mm*L;
  const sb=F+K+N,Pp=sb+P.ind*sb,Ra=Pp+P.buf*Pp;
  const man=it.rman!==''&&it.rman!=null&&!isNaN(+it.rman);
@@ -939,7 +940,7 @@ function calcItem(it,P){
  return {D,H,E,F,J,K,L,N,sb,Pp,Ra,R,S,T,man,qt,ind:Pp-sb,buf:Ra-Pp,Y:qt*R,custo:qt*(D+H),mat:qt*D,mo:qt*H};
 }
 function orcCalc(orc,base){
- const P=parOf(base,orc.cat);
+ const P={...parOf(base,orc.cat),...(orc.par||{})};
  const caps=orc.caps.map(c=>{const its=c.itens.map(i=>({i,c:calcItem(i,P)}));const s=f=>its.reduce((a,x)=>a+f(x),0);return {c,its,total:s(x=>x.c.Y),custo:s(x=>x.c.custo),mat:s(x=>x.c.mat),mo:s(x=>x.c.mo)}});
  const s=f=>caps.reduce((a,x)=>a+f(x),0);
  const tot=s(x=>x.total),custo=s(x=>x.custo),iva=tot*num(orc.iva)/100;
@@ -1113,6 +1114,8 @@ function OrcItem({it,n,P,base,setBase,upd,del,dup,mv,cfg}){
     ${Cell('Material com margem',eur(c.F),'+'+pf(c.E)+(c.H===0?' (só fornecimento)':it.sub?' (subcontratada)':''))}
     ${Cell('Mão-de-obra com margem',eur(c.K),'+'+pf(c.J)+(it.sub?' (subcontratada)':''))}
     ${Cell('Margem material + mão-de-obra',eur(c.N),c.L?pf(P.mm)+' sobre o custo conjunto':'só se houver material e mão-de-obra')}
+    <div className="grid grid-cols-2 gap-3 my-2"><${F2} l=${'Margem material deste trabalho (%)'}><div className="flex gap-1"><${NumIn} blank=${true} ph=${(((c.H===0||it.sub)?P.forn:P.mat)*100).toLocaleString('pt-PT')+' (do orçamento)'} v=${it.pMat===''||it.pMat==null?'':it.pMat*100} on=${v=>set('pMat',v===''?'':v/100)}/>${it.pMat!==''&&it.pMat!=null&&html`<button className="btn2" style=${{padding:'0 10px'}} onClick=${()=>set('pMat','')}>Repor</button>`}</div><//>
+     <${F2} l=${'Margem mão-de-obra deste trabalho (%)'}><div className="flex gap-1"><${NumIn} blank=${true} ph=${((it.sub?P.sub:P.mo)*100).toLocaleString('pt-PT')+' (do orçamento)'} v=${it.pMo===''||it.pMo==null?'':it.pMo*100} on=${v=>set('pMo',v===''?'':v/100)}/>${it.pMo!==''&&it.pMo!=null&&html`<button className="btn2" style=${{padding:'0 10px'}} onClick=${()=>set('pMo','')}>Repor</button>`}</div><//></div>
     ${Cell('Custos indiretos',eur(c.ind),pf(P.ind))}
     ${Cell('Buffer',eur(c.buf),pf(P.buf))}
     ${q!==1&&(num(it.mat)||num(it.mo))?html`<div className="mt-2 pt-2" style=${{borderTop:'2px solid var(--bd)'}}><div className="text-[11px] uppercase tracking-widest mut font-semibold mb-1">Contas para ${q} ${it.un}</div>${num(it.mat)?Cell('Material (custo)',eur(num(it.mat)*q),eur(num(it.mat))+' × '+q+' '+it.un):null}${num(it.mo)?Cell('Mão-de-obra (custo)',eur(num(it.mo)*q),eur(num(it.mo))+' × '+q+' '+it.un):null}${Cell('Custo total',eur((num(it.mat)+num(it.mo))*q))}</div>`:null}
@@ -1127,6 +1130,28 @@ function OrcItem({it,n,P,base,setBase,upd,del,dup,mv,cfg}){
  </div>`}
 
 /* ---- orçamento: página completa ---- */
+/* percentagens editáveis dentro do orçamento (só deste orçamento, ou guardar na categoria) */
+const PCT_F=[['mat','Materiais','quando há material e mão-de-obra'],['forn','Só fornecimento','trabalho só com material'],['mo','Mão-de-obra','mão-de-obra própria'],['sub','Subempreitada','mão-de-obra subcontratada'],['mm','Material + mão-de-obra','sobre o custo conjunto'],['ind','Custos indiretos','sobre o subtotal'],['buf','Buffer','reserva final']];
+function OrcPct({orc,base,setBase,setOrc,R,cfg,goBase}){
+ const [x,setX]=useState(false);const C=parOf(base,orc.cat);const O=orc.par||{};const P=R.P;const mud=Object.keys(O).filter(k=>O[k]!==''&&O[k]!=null&&+O[k]!==+C[k]);
+ const setK=(k,v)=>setOrc({...orc,par:{...O,[k]:v}});const step=(k,d)=>setK(k,Math.max(0,Math.round((num(P[k])+d)*1000)/1000));
+ const [ok,setOk]=useState('');const flash=t=>{setOk(t);setTimeout(()=>setOk(''),2200)};
+ return html`<div className="mt-3 pt-3" style=${{borderTop:'1px solid var(--bd)'}}>
+  <button className="w-full flex items-center justify-between gap-2 text-left" onClick=${()=>setX(!x)}><span><b className="text-sm">Percentagens deste orçamento</b><span className="block text-xs mut">Materiais +${pf(P.mat)} · Mão-de-obra +${pf(P.mo)} · Indiretos +${pf(P.ind)} · Margem total ${pf(R.margP)}${mud.length?' · '+mud.length+' alterada(s)':''}</span></span><span className="btn2" style=${{padding:'6px 12px',whiteSpace:'nowrap'}}>${x?'Fechar':'Editar'}</span></button>
+  ${x&&html`<div className="mt-3">
+   <div className="text-xs mut mb-2">As alterações aqui só mudam <b>este</b> orçamento. O total atualiza logo. Valores da categoria ${orc.cat} entre parênteses.</div>
+   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">${PCT_F.map(a=>{const ch=mud.includes(a[0]);return html`<div key=${a[0]} className="rounded-xl p-2.5" style=${{border:'1px solid '+(ch?cfg.azul:'var(--bd)'),background:ch?'color-mix(in srgb, '+cfg.azul+' 7%, transparent)':'transparent'}}>
+    <div className="flex items-baseline justify-between gap-2"><span className="text-sm font-semibold">${a[1]}</span><span className="text-[11px] mut">(${pf(C[a[0]])})</span></div>
+    <div className="text-[11px] mut mb-1">${a[2]}</div>
+    <div className="flex gap-1 items-center"><button className="btn2" style=${{padding:'0 12px',minHeight:38}} aria-label=${'Menos 1% em '+a[1]} onClick=${()=>step(a[0],-.01)}>−</button><div style=${{flex:'1 1 60px'}}><${Pct} v=${P[a[0]]} on=${v=>setK(a[0],v)}/></div><span className="text-sm mut">%</span><button className="btn2" style=${{padding:'0 12px',minHeight:38}} aria-label=${'Mais 1% em '+a[1]} onClick=${()=>step(a[0],.01)}>+</button></div>
+    ${ch&&html`<button className="text-xs font-semibold mt-1" style=${{color:cfg.azul}} onClick=${()=>{const n={...O};delete n[a[0]];setOrc({...orc,par:n})}}>Repor ${pf(C[a[0]])}</button>`}</div>`})}</div>
+   <div className="flex flex-wrap gap-2 mt-3 items-center">
+    ${mud.length>0&&html`<button className="btn2" onClick=${()=>{setOrc({...orc,par:{}});flash('Repostas as percentagens da categoria '+orc.cat+'.')}}>Repor todas (categoria ${orc.cat})</button>`}
+    ${mud.length>0&&html`<button className="btn2" onClick=${()=>{setBase({...base,params:{...base.params,[orc.cat]:{...C,...Object.fromEntries(mud.map(k=>[k,+O[k]]))}}});setOrc({...orc,par:{}});flash('Guardado na categoria '+orc.cat+': vale para os orçamentos novos e os que usam esta categoria.')}}>Guardar na categoria ${orc.cat}</button>`}
+    <button className="text-xs font-semibold" style=${{color:cfg.azul}} onClick=${goBase}>Editar categorias na Base de dados →</button>
+    ${ok&&html`<span className="text-xs font-semibold" style=${{color:cfg.azul}}>${ok}</span>`}</div>
+   <div className="text-xs mut mt-2">Também podes mudar a margem de material e de mão-de-obra de um só trabalho, dentro de cada trabalho.</div>
+  </div>`}</div>`}
 function OrcPage({orc,orcs,setOrcs,obras,setObras,base,setBase,cfg,back,openOrc,goBase,soltar,pastas=[],PA={}}){
  const [open,setOpen]=useState({});const [pickCap,setPickCap]=useState(null);const [newCap,setNewCap]=useState('');const [conf,setConf]=useState(false);const [view,setView]=useState(false);const [pmsg,setPmsg]=useState('');const [capV,setCapV0]=useState(null);const setCapV=id=>{setCapV0(id);try{window.scrollTo(0,0)}catch(e){}};
  const R=orcCalc(orc,base);const P=R.P;
@@ -1165,7 +1190,7 @@ function OrcPage({orc,orcs,setOrcs,obras,setObras,base,setBase,cfg,back,openOrc,
     <div className="col-span-2"><${F2} l="Categoria da obra (define as margens)"><select className="inp" value=${orc.cat} onChange=${e=>f('cat',e.target.value)}>${['A','B','C'].map(k=>html`<option key=${k} value=${k}>${k} · ${base.catDesc[k]}</option>`)}</select><//></div>
     <div className="col-span-2"><${F2} l="Taxa de IVA (%)"><div className="flex gap-1 items-center"><${NumIn} v=${orc.iva} on=${v=>f('iva',v)}/>${[23,13,6,0].map(t=>html`<button key=${t} onClick=${()=>f('iva',t)} className="px-2.5 py-1.5 rounded-lg text-xs font-semibold" style=${{background:num(orc.iva)===t?'var(--blue)':'var(--card)',color:num(orc.iva)===t?'#fff':'var(--fg)',border:'1px solid var(--bd)'}}>${t}%</button>`)}</div><//></div>
    </div>
-   <div className="text-xs mut mt-3">Categoria ${orc.cat}: materiais +${pf(P.mat)} (só fornecimento +${pf(P.forn)}), mão-de-obra +${pf(P.mo)} (subcontratada +${pf(P.sub)}), material+mão-de-obra +${pf(P.mm)}, indiretos +${pf(P.ind)}, buffer +${pf(P.buf)}. <button className="font-semibold" style=${{color:cfg.azul}} onClick=${goBase}>Editar percentagens →</button></div>
+   <${OrcPct} orc=${orc} base=${base} setBase=${setBase} setOrc=${setOrc} R=${R} cfg=${cfg} goBase=${goBase}/>
    ${obraAtual&&html`<div className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-3 text-sm" style=${{borderTop:'1px solid var(--bd)'}}><span className="mut">Orçamento atual da obra ${obraAtual.cliente}: <b style=${{color:'var(--fg)'}}>${eur(obraAtual.orc)}</b></span><button className="btn2" onClick=${usarTotal}>Usar ${eur(R.tot)} como orçamento da obra</button></div>`}
   <//>
 
@@ -1678,15 +1703,49 @@ function syncManual(b,mats,orcs){let P=null;const k=(n,f)=>normTxt(n).replace(/\
   if(i>=0){const p=L[i];const setCap=(!p.cap||p.capAuto)&&cap&&p.cap!==cap;const setFe=!p.ferrManual&&!!p.ferr!==fe;if(!setCap&&!setFe&&p.nome===rec.nome&&p.un===rec.un&&p.preco===rec.preco&&(p.forn||'')===rec.forn&&(p.data||'')===rec.data)return;if(!P)P=L.slice();P[i]={...p,...rec,fat:p.fat||m.id,...(setCap?{cap,capAuto:1}:{}),...(setFe?{ferr:fe}:{})}}
   else{if(!P)P=L.slice();P.unshift({id:uid(),tipo:'Material',cap,capAuto:1,ferr:fe,auto:1,fat:m.id,...rec})}});
  return P?{...b,precos:P}:b}
+function loadPdfJs(){return new Promise((ok,ko)=>{if(window.pdfjsLib)return ok(window.pdfjsLib);const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';s.onload=()=>{try{window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'}catch(e){}window.pdfjsLib?ok(window.pdfjsLib):ko(new Error('pdf'))};s.onerror=()=>ko(new Error('pdf'));document.head.appendChild(s)})}
+function PdfPrev({url,onBig}){
+ const [imgs,setImgs]=useState(null);const [fail,setFail]=useState(false);
+ useEffect(()=>{let vivo=true;(async()=>{try{const L=await loadPdfJs();const doc=await L.getDocument(url).promise;const out=[];for(let i=1;i<=Math.min(doc.numPages,6);i++){const pg=await doc.getPage(i);const v0=pg.getViewport({scale:1});const v=pg.getViewport({scale:Math.min(2,1400/v0.width)});const c=document.createElement('canvas');c.width=v.width;c.height=v.height;await pg.render({canvasContext:c.getContext('2d'),viewport:v}).promise;out.push(c.toDataURL('image/jpeg',.85))}if(vivo)setImgs(out)}catch(e){if(vivo)setFail(true)}})();return()=>{vivo=false}},[url]);
+ if(fail)return html`<div><iframe src=${url+'#view=FitH'} title="Fatura" style=${{width:'100%',height:'50vh',border:0,display:'block',background:'#fff'}}></iframe><a className="block text-center text-sm font-semibold py-2" style=${{color:'var(--blue)'}} href=${url} target="_blank" rel="noopener">Abrir a fatura em ecrã inteiro</a></div>`;
+ if(!imgs)return html`<div className="text-sm mut text-center py-10"><div className="hcspin mx-auto mb-2"></div>A mostrar a fatura…</div>`;
+ return html`<div>${imgs.map((u,i)=>html`<button key=${i} className="block w-full" onClick=${()=>onBig(u)} aria-label=${'Ver página '+(i+1)+' em grande'}><img src=${u} alt=${'Fatura, página '+(i+1)} style=${{width:'100%',display:'block',borderBottom:'2px solid var(--bd)'}}/></button>`)}<a className="block text-center text-sm font-semibold py-2" style=${{color:'var(--blue)'}} href=${url} target="_blank" rel="noopener">Abrir o PDF original</a></div>`}
+/* revisão da fatura lida: mostra a fatura em cima e só organiza depois de confirmar */
+function FatRev({rv,obras,ok,cancel}){
+ const [r,setR]=useState(()=>({...rv.ler,linhas:(rv.ler.linhas||[]).slice()}));const [big,setBig]=useState(null);
+ const s=(k,v)=>setR(x=>({...x,[k]:v}));const tot=Math.round(num(r.preco)*(1+num(r.iva)/100)*100)/100;
+ return html`<${Modal} close=${cancel} wide=${780}>
+  <div className="flex items-start justify-between gap-3 mb-2"><div><h3 className="font-bold text-lg">Confirmar fatura</h3><div className="text-xs mut">${r.lido==='auto'?'Vê a fatura e confere os valores lidos. Só é organizada quando carregares em Confirmar.':'Não consegui ler esta fatura'+(rv.ler.err?' ('+rv.ler.err+')':'')+'. Preenche os valores a partir da imagem.'}</div></div><button className="text-2xl px-2" onClick=${cancel} aria-label="Fechar">×</button></div>
+  <div className="rounded-xl overflow-auto mb-3" style=${{border:'1px solid var(--bd)',background:'var(--inp)',maxHeight:'52vh'}}>
+   ${rv.pv.map((p,i)=>p.pdf?html`<${PdfPrev} key=${i} url=${p.url} onBig=${setBig}/>`:html`<button key=${i} className="block w-full" onClick=${()=>setBig(p.url)} aria-label=${'Ver página '+(i+1)+' em grande'}><img src=${p.url} alt=${'Fatura, página '+(i+1)} style=${{width:'100%',display:'block',borderBottom:i<rv.pv.length-1?'2px solid var(--bd)':0}}/></button>`)}</div>
+  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+   <div className="col-span-2"><${F2} l="Fornecedor"><input className="inp" value=${r.forn||''} onChange=${e=>s('forn',e.target.value)}/><//></div>
+   <${F2} l="N.º fatura"><input className="inp" value=${r.nf||''} onChange=${e=>s('nf',e.target.value)}/><//>
+   <${F2} l="Data"><input className="inp" type="date" value=${r.data||''} onChange=${e=>s('data',e.target.value)}/><//>
+   <div className="col-span-2"><${F2} l="Descrição"><input className="inp" value=${r.artigo||''} onChange=${e=>s('artigo',e.target.value)}/><//></div>
+   <div className="col-span-2">${r.despFixa?html`<${F2} l="Despesa fixa"><input className="inp" value=${r.catFixa||''} placeholder="Ex.: Água, Luz, Ferramentas…" onChange=${e=>s('catFixa',e.target.value)}/><//>`:html`<${F2} l="Obra"><${ObraSel} v=${r.obra||''} obras=${obras||[]} onChange=${v=>setR(x=>({...x,obra:v,obraAuto:0}))}/><//>`}</div>
+   <${F2} l="Valor sem IVA (€)"><${NumIn} v=${r.preco} on=${v=>s('preco',v)}/><//>
+   <${F2} l="IVA (%)"><${NumIn} v=${r.iva} on=${v=>s('iva',v)}/><//>
+   <${F2} l="Categoria"><select className="inp" value=${r.cat||'Outros'} onChange=${e=>s('cat',e.target.value)}>${CATS.map(c=>html`<option key=${c}>${c}</option>`)}</select><//>
+   <div className="flex flex-col justify-end"><div className="text-[11px] uppercase tracking-wider mut">Total com IVA</div><div className="font-extrabold text-lg">${eur(tot)}</div></div>
+  </div>
+  <label className="flex items-center gap-2 text-sm mt-3"><input type="checkbox" checked=${!!r.despFixa} onChange=${e=>setR(x=>({...x,despFixa:e.target.checked?1:0,obra:e.target.checked?0:x.obra}))}/>É uma despesa fixa (água, luz, renda, seguros, ferramentas…) e não de uma obra</label>
+  ${!r.despFixa&&r.linhas.length>0&&html`<div className="mt-3"><div className="text-[11px] uppercase tracking-wider mut font-semibold mb-1">Produtos que vão para a tabela de preços (${r.linhas.length})</div>
+   <div className="space-y-1" style=${{maxHeight:200,overflow:'auto'}}>${r.linhas.map((l,i)=>html`<div key=${i} className="flex items-center gap-2 text-sm py-1" style=${{borderTop:'1px solid var(--bd)'}}><span className="flex-1 min-w-0">${l.nome}${l.ferr?html` <span className="text-[10px] font-bold px-1.5 rounded" style=${{border:'1px solid var(--bd)'}}>Ferramenta</span>`:null}</span><span className="mut whitespace-nowrap">${num(l.qtd)} ${l.un||''} × ${eur(l.preco)}</span><button className="text-xs font-bold px-2" style=${{color:RED}} aria-label="Não guardar este produto" onClick=${()=>setR(x=>({...x,linhas:x.linhas.filter((_,j)=>j!==i)}))}>✕</button></div>`)}</div></div>`}
+  <div className="flex flex-wrap gap-2 justify-end mt-4"><button className="btn2" onClick=${cancel}>Cancelar</button><button className="btn" onClick=${()=>ok(r)}>Confirmar e organizar</button></div>
+  ${big&&html`<div className="fixed inset-0 z-[70] flex items-center justify-center p-2" style=${{background:'rgba(0,0,0,.85)'}} onClick=${()=>setBig(null)}><img src=${big} alt="Fatura em grande" style=${{maxWidth:'100%',maxHeight:'100%',objectFit:'contain'}}/></div>`}
+ <//>`}
 function ImportBtn({onAdd,obras}){
- const ref=useRef(null);const cam=useRef(null);const gal=useRef(null);const [st,setSt]=useState('');const [busy,setBusy]=useState(false);const [pages,setPages]=useState(null);
+ const ref=useRef(null);const cam=useRef(null);const gal=useRef(null);const [st,setSt]=useState('');const [busy,setBusy]=useState(false);const [pages,setPages]=useState(null);const [rev,setRev]=useState(null);
+ const fecharRev=()=>{(rev?rev.pv:[]).forEach(p=>{try{URL.revokeObjectURL(p.url)}catch(e){}});setRev(null)};
+ const concluir=(ler,att)=>{const {err,...row}=ler;onAdd({...row,pago:false,anexo:att});const nl=row.despFixa?0:(row.linhas||[]).length;if(nl)try{window.dispatchEvent(new CustomEvent('hc-precos',{detail:{linhas:row.linhas,forn:row.forn,data:row.data}}))}catch(e){};const on=row.obra&&(obras||[]).find(o=>o.id===row.obra);setSt('Fatura guardada ✓'+(on?' Obra: '+on.cliente+'.':'')+(nl?' '+nl+' produto(s) na tabela de preços.':''));setTimeout(()=>setSt(''),9000)};
  const addPages=fs=>{const arr=[...fs].filter(f=>/^image\//.test(f.type)||/\.(jpe?g|png|webp|heic)$/i.test(f.name||'')).map(f=>({id:uid(),file:f,url:URL.createObjectURL(f)}));if(arr.length)setPages(p=>[...(p||[]),...arr])};
  const closePages=()=>{(pages||[]).forEach(p=>{try{URL.revokeObjectURL(p.url)}catch(e){}});setPages(null)};
  const go=async f0=>{if(!f0||(Array.isArray(f0)&&!f0.length))return;const files=Array.isArray(f0)?f0:[f0];setBusy(true);setSt('A ler a fatura…');let f=files[0];try{if(files.length>1)f=await pagesToPdf(files)}catch(e){}const src=files.length>1?files:files[0];
-  try{const [ler,att]=await Promise.all([lerFatura(src,obras),saveAtt(f).catch(()=>null)]);const {err,...row}=ler;onAdd({...row,pago:false,anexo:att});const nl=row.despFixa?0:(row.linhas||[]).length;if(nl)try{window.dispatchEvent(new CustomEvent('hc-precos',{detail:{linhas:row.linhas,forn:row.forn,data:row.data}}))}catch(e){};const on=row.obra&&(obras||[]).find(o=>o.id===row.obra);setSt(ler.lido==='auto'?'Fatura lida ✓'+(on?' Associada à obra '+on.cliente+'.':'')+(nl?' '+nl+' produto(s) na tabela de preços.':'')+' Confirma os valores.':'Não consegui ler ('+(err||'erro')+'). Fatura anexada: preenche os valores.')}
+  try{const [ler,att]=await Promise.all([lerFatura(src,obras),saveAtt(f).catch(()=>null)]);const pv=files.map(x=>({url:URL.createObjectURL(x),pdf:/pdf/i.test(x.type||'')||/\.pdf$/i.test(x.name||'')}));setSt('');setRev({ler,att,pv})}
   catch(e){setSt('Não foi possível importar este ficheiro.')}
   setBusy(false);setTimeout(()=>setSt(''),9000)};
- return html`<span className="inline-flex items-center gap-2 flex-wrap"><input ref=${ref} type="file" accept="image/*,application/pdf" multiple hidden onChange=${e=>{const fs=[...e.target.files];e.target.value='';if(fs.length>1&&fs.every(x=>/^image\//.test(x.type)))go(fs);else go(fs[0])}}/><input ref=${gal} type="file" accept="image/*" multiple hidden onChange=${e=>{addPages(e.target.files);e.target.value=''}}/><input ref=${cam} type="file" accept="image/*" capture="environment" hidden onChange=${e=>{addPages(e.target.files);e.target.value=''}}/><${IB} ic="cam" t="Tirar foto à fatura" txt="Foto" on=${()=>!busy&&cam.current&&cam.current.click()}/><${IB} ic="upl" t="Importar fatura (PDF ou foto da galeria)" on=${()=>!busy&&ref.current&&ref.current.click()}/>${pages&&!busy&&html`<${PagesModal} pages=${pages} add=${()=>cam.current&&cam.current.click()} gal=${()=>gal.current&&gal.current.click()} remove=${i=>setPages(p=>{try{URL.revokeObjectURL(p[i].url)}catch(e){};return p.filter((_,j)=>j!==i)})} move=${(i,d)=>setPages(p=>{const a=p.slice();const j=i+d;if(j<0||j>=a.length)return a;[a[i],a[j]]=[a[j],a[i]];return a})} ok=${()=>{const fs=pages.map(p=>p.file);closePages();go(fs)}} cancel=${closePages}/>`}${busy&&html`<div className="fixed inset-0 z-[60] flex items-center justify-center" style=${{background:'rgba(0,0,0,.45)'}}><div className="card text-center" style=${{padding:'22px 26px'}}><div className="hcspin mx-auto mb-3"></div><b>A ler a fatura…</b><div className="text-xs mut mt-1">Isto demora uns segundos.</div></div></div>`}${st&&html`<span key=${st} className="text-xs font-semibold st-msg" style=${{color:'var(--blue)'}}>${st}</span>`}</span>`}
+ return html`<span className="inline-flex items-center gap-2 flex-wrap"><input ref=${ref} type="file" accept="image/*,application/pdf" multiple hidden onChange=${e=>{const fs=[...e.target.files];e.target.value='';if(fs.length>1&&fs.every(x=>/^image\//.test(x.type)))go(fs);else go(fs[0])}}/><input ref=${gal} type="file" accept="image/*" multiple hidden onChange=${e=>{addPages(e.target.files);e.target.value=''}}/><input ref=${cam} type="file" accept="image/*" capture="environment" hidden onChange=${e=>{addPages(e.target.files);e.target.value=''}}/><${IB} ic="cam" t="Tirar foto à fatura" txt="Foto" on=${()=>!busy&&cam.current&&cam.current.click()}/><${IB} ic="upl" t="Importar fatura (PDF ou foto da galeria)" on=${()=>!busy&&ref.current&&ref.current.click()}/>${pages&&!busy&&html`<${PagesModal} pages=${pages} add=${()=>cam.current&&cam.current.click()} gal=${()=>gal.current&&gal.current.click()} remove=${i=>setPages(p=>{try{URL.revokeObjectURL(p[i].url)}catch(e){};return p.filter((_,j)=>j!==i)})} move=${(i,d)=>setPages(p=>{const a=p.slice();const j=i+d;if(j<0||j>=a.length)return a;[a[i],a[j]]=[a[j],a[i]];return a})} ok=${()=>{const fs=pages.map(p=>p.file);closePages();go(fs)}} cancel=${closePages}/>`}${rev&&html`<${FatRev} rv=${rev} obras=${obras} cancel=${()=>{fecharRev();setSt('Fatura cancelada.');setTimeout(()=>setSt(''),4000)}} ok=${r=>{const at=rev.att;fecharRev();concluir({...r,linhas:r.despFixa?[]:r.linhas,obraAuto:r.obraAuto&&r.obra?1:0},at)}}/>`}${busy&&html`<div className="fixed inset-0 z-[60] flex items-center justify-center" style=${{background:'rgba(0,0,0,.45)'}}><div className="card text-center" style=${{padding:'22px 26px'}}><div className="hcspin mx-auto mb-3"></div><b>A ler a fatura…</b><div className="text-xs mut mt-1">Isto demora uns segundos.</div></div></div>`}${st&&html`<span key=${st} className="text-xs font-semibold st-msg" style=${{color:'var(--blue)'}}>${st}</span>`}</span>`}
 
 /* ======== Cofre: palavras-passe e cartões, cifrados com o PIN (AES-GCM + PBKDF2) ======== */
 const COFRE_H='3aff7b461cf3b934c722ef061b20889aa6733c1d5c5c6938e5235682797fd41e';
