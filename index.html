@@ -468,8 +468,9 @@ const NEWIDS=new Set();
 const fdate=d=>d?d.split('-').reverse().join('/'):'';
 /* volta a ler o fornecedor das faturas já guardadas, pelo logotipo */
 function FornReler({mats,setMats,cfg}){
- const [st,setSt]=useState(null);const [conf,setConf]=useState(false);const stop=useRef(false);
- const alvo=mats.filter(m=>m.anexo);
+ const [st,setSt]=useState(null);const [conf,setConf]=useState(false);const stop=useRef(false);const [sel,setSel]=useState([]);const [ab,setAb]=useState(false);
+ const comA=mats.filter(m=>m.anexo);const GF={};comA.forEach(m=>{const f=String(m.forn||'Sem fornecedor').trim()||'Sem fornecedor';GF[f]=(GF[f]||0)+1});const nomes=Object.keys(GF).sort((a,b)=>a.localeCompare(b,'pt'));
+ const alvo=comA.filter(m=>sel.includes(String(m.forn||'Sem fornecedor').trim()||'Sem fornecedor'));
  const correr=async()=>{setConf(false);stop.current=false;let ok=0,fa=0;const mud={};
   for(let i=0;i<alvo.length;i++){if(stop.current)break;const m=alvo[i];setSt({i:i+1,n:alvo.length,ok,fa});
    try{const url=await attUrl(m.anexo);if(!url)throw new Error('sem anexo');const bl=await (await fetch(url)).blob();const nm=(m.anexo&&m.anexo.name)||'fatura';const type=bl.type||(/\.pdf$/i.test(nm)?'application/pdf':'image/jpeg');
@@ -477,12 +478,14 @@ function FornReler({mats,setMats,cfg}){
     if(fo){mud[m.id]={forn:fo,...(r.nif_fornecedor?{nif:String(r.nif_fornecedor)}:{})};ok++;setMats(ms=>ms.map(x=>x.id===m.id?{...x,...mud[m.id]}:x))}else fa++}
    catch(e){fa++;if(/cr[eé]dit|credit|balance/i.test(String(e&&e.message))){setSt({fim:true,ok,fa,msg:'Sem créditos da Anthropic para continuar.'});return}}}
   setSt({fim:true,ok,fa})};
- if(!alvo.length)return null;
+ if(!comA.length)return null;
  return html`<div className='card' style=${{padding:'12px 14px'}}>
-  ${!st&&!conf&&html`<div className='flex flex-wrap items-center justify-between gap-2'><div className='text-sm'><b>Fornecedores pelo logotipo</b><div className='text-xs mut'>Volta a ler as ${alvo.length} faturas com anexo e põe o nome da marca do logotipo.</div></div><button className='btn2' onClick=${()=>setConf(true)}>Atualizar fornecedores</button></div>`}
+  ${!st&&!conf&&html`<div><div className='flex flex-wrap items-center justify-between gap-2'><div className='text-sm'><b>Fornecedores pelo logotipo</b><div className='text-xs mut'>Escolhe os fornecedores com nome errado e a app volta a ler só essas faturas.</div></div><button className='btn2' onClick=${()=>setAb(!ab)}>${ab?'Fechar':'Escolher fornecedores'}</button></div>
+   ${ab&&html`<div className='mt-3'><div className='flex flex-wrap gap-1.5'>${nomes.map(n=>{const on=sel.includes(n);return html`<button key=${n} onClick=${()=>setSel(s=>on?s.filter(x=>x!==n):[...s,n])} className='px-3 py-1.5 rounded-full text-sm font-semibold' style=${{background:on?cfg.azul:'var(--card)',color:on?'#fff':'var(--fg)',border:'1px solid '+(on?cfg.azul:'var(--bd)')}}>${on?'✓ ':''}${n} <span style=${{opacity:.7,fontWeight:400}}>(${GF[n]})</span></button>`})}</div>
+    <div className='flex flex-wrap items-center justify-between gap-2 mt-3'><span className='text-sm mut'>${alvo.length?alvo.length+(alvo.length===1?' fatura escolhida':' faturas escolhidas'):'Toca nos fornecedores a reler.'}</span><button className='btn' disabled=${!alvo.length} style=${{opacity:alvo.length?1:.5}} onClick=${()=>alvo.length&&setConf(true)}>Reler escolhidos</button></div></div>`}</div>`}
   ${conf&&html`<div className='flex flex-wrap items-center justify-between gap-2'><div className='text-sm'>Isto usa a leitura automática ${alvo.length} ${alvo.length===1?"vez":"vezes"} (gasta créditos da Anthropic, mais ou menos o mesmo que ler ${alvo.length} ${alvo.length===1?"fatura nova":"faturas novas"}). Continuar?</div><div className='flex gap-2'><button className='btn2' onClick=${()=>setConf(false)}>Cancelar</button><button className='btn' onClick=${correr}>Sim, atualizar</button></div></div>`}
   ${st&&!st.fim&&html`<div className='flex flex-wrap items-center justify-between gap-2'><div className='text-sm'><b>A ler ${st.i} de ${st.n}…</b> <span className='mut'>${st.ok} atualizadas</span><div className='mt-2' style=${{minWidth:200}}><${XBar} p=${st.i/st.n*100} c=${cfg.azul}/></div></div><button className='btn2' onClick=${()=>{stop.current=true}}>Parar</button></div>`}
-  ${st&&st.fim&&html`<div className='flex flex-wrap items-center justify-between gap-2'><div className='text-sm'><b style=${{color:cfg.azul}}>Feito ✓</b> ${st.ok} fornecedores atualizados pelo logotipo${st.fa?' · '+st.fa+' não deu para ler':''}${st.msg?' · '+st.msg:''}</div><button className='btn2' onClick=${()=>setSt(null)}>Fechar</button></div>`}
+  ${st&&st.fim&&html`<div className='flex flex-wrap items-center justify-between gap-2'><div className='text-sm'><b style=${{color:cfg.azul}}>Feito ✓</b> ${st.ok} fornecedores atualizados pelo logotipo${st.fa?' · '+st.fa+' não deu para ler':''}${st.msg?' · '+st.msg:''}</div><button className='btn2' onClick=${()=>{setSt(null);setSel([])}}>Fechar</button></div>`}
  </div>`}
 function Faturas({mats,setMats,obras,cfg,orcs}){
  const [q,setQ]=useState('');const [fo,setFo]=useState(()=>{const f=(window.__hcFiltro||{}).fat;if(f){delete window.__hcFiltro.fat;return f.fo||''}return ''});const [st,setSt]=useState('');const [cp,setCp]=useState(false);
