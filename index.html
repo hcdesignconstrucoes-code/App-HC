@@ -1383,7 +1383,7 @@ function FatDetail({m,obras,upd,del,dup,showObra,orcs,mobile,cfg}){
   ${m.lido&&html`<div className="text-xs font-semibold mb-2" style=${{color:'var(--blue)'}}>${m.lido==='auto'?'Valores lidos da fatura. Confirma antes de guardar.':'Fatura anexada. Preenche os valores a partir do original.'} <button className="underline" onClick=${()=>upd(m.id,'lido','')}>Confirmar</button></div>`}
   <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
    ${mobile&&html`<${F2} l="Data"><input className="inp" type="date" value=${m.data||''} onChange=${e=>upd(m.id,'data',e.target.value)}/><//>`}
-   ${mobile&&html`<${F2} l="Fornecedor">${T('forn')}<//>`}
+   ${mobile&&html`<${F2} l="Fornecedor"><input className="inp" value=${m.forn||''} onFocus=${e=>{e.target.dataset.orig=m.forn||''}} onChange=${e=>upd(m.id,'forn',e.target.value)} onBlur=${e=>{const de=(e.target.dataset.orig||'').trim(),para=(e.target.value||'').trim();if(de&&para&&de!==para&&window.__hcRenForn)window.__hcRenForn(de,para,m.nif,m.id)}}/><div className="text-[11px] mut mt-1">Ao mudar o nome, muda também nas outras faturas deste fornecedor.</div><//>`}
    ${mobile&&html`<${F2} l="Valor líquido (€)"><${NumIn} v=${netM(m)} on=${v=>upd(m.id,patchLiq(m,v))}/><//>`}
    ${mobile&&html`<${F2} l="IVA (€)"><${NumIn} v=${netM(m)*m.iva/100} on=${v=>upd(m.id,patchIva(m,v))}/><//>`}
    ${mobile&&html`<${F2} l="Total (€)"><${NumIn} v=${matTot(m)} on=${v=>upd(m.id,patchTot(m,v))}/><//>`}
@@ -2253,7 +2253,7 @@ function App(){
    if(!f){f={id:uid(),nome:m.novoTopico||((m.catFixa||'Despesa')+(m.forn?' — '+m.forn:'')),cat:FX_CATS.includes(m.catFixa)?m.catFixa:'Outros',forn:m.forn||'',valor:Math.round(matTot(m)*100)/100,per:'mensal',prox:m.data?addMeses(m.data,1):hojeISO(),ativa:true,notas:'',hist:[]};Fx=[f,...Fx]}asg[m.id]=f.id});
   setFixas(Fx);setMats(ms=>ms.map(m=>asg[m.id]?{...m,fixa:asg[m.id],despFixa:0,novoTopico:undefined,fxMes:m.fxMes||(m.data||'').slice(0,7)}:m))},[mats]);
  const pk=tab+'|'+det+'|'+orcDet;window.__hcCaps=base.caps;window.__hcFixas=fixas;
- window.__hcMats=mats;useEffect(()=>{const t=setTimeout(()=>{const U=fornUnify(mats);if(Object.keys(U).length){setMats(ms=>ms.map(m=>U[m.forn]?{...m,forn:U[m.forn]}:m));setBase(b=>({...b,precos:(b.precos||[]).map(p=>U[p.forn]?{...p,forn:U[p.forn]}:p)}))}},900);return()=>clearTimeout(t)},[mats]);
+ window.__hcMats=mats;window.__hcRenForn=(de,para,nif,id)=>{const n=String(nif||'').replace(/\D/g,'');setMats(ms=>ms.map(x=>x.id!==id&&(x.forn===de||(n.length>=9&&String(x.nif||'').replace(/\D/g,'')===n))?{...x,forn:para}:x));setBase(b=>({...b,precos:(b.precos||[]).map(p=>p.forn===de?{...p,forn:para}:p)}))};
  useEffect(()=>{const t=setTimeout(()=>{const ch={};mats.forEach(m=>{if(!m.obra||m.fixa||m.itemSet)return;const cur=m.item||'';if(cur&&!m.itemAuto)return;const v=autoItem(m,orcs,base);if(v&&v!==cur)ch[m.id]=v});if(Object.keys(ch).length)setMats(ms=>ms.map(m=>ch[m.id]&&!m.itemSet?{...m,item:ch[m.id],itemAuto:1}:m))},1500);return()=>clearTimeout(t)},[mats,orcs]);
  useEffect(()=>{const t=setTimeout(()=>setBase(b=>syncManual(b,mats,orcs)),1200);return()=>clearTimeout(t)},[mats,orcs,((base&&base.precos)||[]).length]);
  useEffect(()=>{const f=e=>{const d=e.detail||{};setBase(b=>mergePrecos(b,d.linhas,d.forn,d.data))};window.addEventListener('hc-precos',f);return()=>window.removeEventListener('hc-precos',f)},[]);
