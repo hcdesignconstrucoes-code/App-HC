@@ -879,7 +879,8 @@ function FixasMeses(props){const {fxl,setFxl,fixas,mats,cfg,trabs=[],mos=[]}=pro
     <div className='flex items-start justify-between gap-2'><div className='min-w-0'><div className='font-extrabold text-lg leading-tight'>${mesLabel(m)}</div><div className='text-xs mut'>${vazio?'Ainda sem despesas · toca para criar':x.ok+' de '+x.R.length+' tópicos pagos'}</div></div>${m===hm&&html`<span className='text-[10px] font-bold uppercase px-2 py-0.5 rounded-full whitespace-nowrap' style=${{border:'1px solid '+cfg.azul,color:cfg.azul}}>Este mês</span>`}</div>
     ${!vazio&&html`<div className='flex items-end justify-between gap-2 mt-3'><div><div className='text-xs mut'>Total</div><div className='font-bold text-lg'>${eur(x.tot)}</div></div><div className='text-right'>${falta>0.005?html`<div className='text-xs font-semibold' style=${{color:RED}}>Por pagar ${eurS(falta)}</div>`:html`<div className='text-xs font-semibold' style=${{color:cfg.azul}}>Tudo pago ✓</div>`}</div></div>
     <div className='mt-2'><${XBar} p=${p} c=${cfg.azul}/></div>`}</button>`})}</div></div>`}
-function FxMesRow({r,mes,setFxl,setMats,mats,cfg}){
+function FxMesRow({r,mes,setFxl,setMats,mats,cfg,obras=[],orcs=[]}){
+ const updF=(id,k,v)=>setMats(ms=>ms.map(m=>m.id===id?{...m,...(typeof k==='object'?k:{[k]:v})}:m));const dupF=m=>{const id=Math.max(0,...mats.map(x=>num(x.id)))+1;setMats(ms=>[{...m,id,criado:Date.now()},...ms])};
  const [x,setX]=useState(false);const [st,col]=fxEstadoR(r,cfg);const hm=hojeISO().slice(0,7);
  const updL=p=>{if(r.l)setFxl(ls=>ls.map(l=>l.id===r.l.id?{...l,...p}:l));else if(r.t)setFxl(ls=>[{...fxLanc(r.t,mes),...p},...ls])};
  const updM=(id,p)=>setMats(ms=>ms.map(m=>m.id===id?{...m,...p}:m));
@@ -899,17 +900,10 @@ function FxMesRow({r,mes,setFxl,setMats,mats,cfg}){
    <div className='mt-3'><${F2} l='Notas'><input className='inp' placeholder='Referência, contrato, observações…' value=${(r.l&&r.l.notas)||''} onChange=${e=>updL({notas:e.target.value})}/><//></div>
    <div className='mt-3 rounded-xl p-3' style=${{background:'var(--inp)'}}><div className='flex flex-wrap items-center justify-between gap-2 mb-1'><span className='text-[11px] uppercase tracking-wider mut font-semibold'>Faturas deste mês · ${r.fs.length}</span>${r.id&&html`<button className='text-xs font-semibold' style=${{color:cfg.azul}} onClick=${fatMao}>+ Fatura à mão</button>`}</div>
     ${!r.fs.length&&html`<div className='text-xs mut py-1'>Ainda sem fatura. Nas Faturas, escolhe "Despesa fixa" → <b>${r.nome}</b> e o mês, ou carrega em "+ Fatura à mão".</div>`}
-    ${r.fs.map((m,i)=>html`<div key=${m.id} className='py-2' style=${{borderTop:i?'1px solid var(--bd)':'none'}}>
-     <div className='flex flex-wrap items-center gap-2 mb-1 text-sm'><b>${m.forn||m.artigo||'Fatura'}</b>${m.nf?html`<span className='mut text-xs'>${m.nf}</span>`:null}${m.anexo&&html`<${AttBtn} m=${m} upd=${updM} cfg=${cfg}/>`}</div>
-     <div className='grid grid-cols-2 md:grid-cols-[130px_120px_110px_130px_auto] gap-2 items-center'>
-      <input className='inp' type='date' aria-label='Data da fatura' value=${m.data||''} onChange=${e=>updM(m.id,{data:e.target.value})}/>
-      <${NumIn} v=${matTot(m)} on=${v=>updM(m.id,patchTot(m,v))}/>
-      <select className='inp' style=${{fontWeight:600,color:m.pago?cfg.azul:'var(--fg)'}} value=${m.pago?'1':'0'} onChange=${e=>updM(m.id,{pago:e.target.value==='1'})}><option value='1'>Paga</option><option value='0'>Por pagar</option></select>
-      <input className='inp' type='month' aria-label='Mês da despesa' title='Mudar para outro mês' value=${fxMesOf(m)} onChange=${e=>e.target.value&&updM(m.id,{fxMes:e.target.value})}/>
-      <button className='mut text-xs underline justify-self-end' onClick=${()=>updM(m.id,{fixa:'',fxMes:''})}>desligar</button></div></div>`)}</div>
+    <div className='space-y-2 mt-1'>${r.fs.slice().sort((a,b)=>(num(b.criado)-num(a.criado))||(num(b.id)-num(a.id))).map(m=>html`<${FatRow} key=${m.id} m=${m} obras=${obras} upd=${updF} del=${id=>setMats(ms=>ms.filter(z=>z.id!==id))} dup=${dupF} cfg=${cfg} showObra=${true} orcs=${orcs}/>`)}</div></div>
    <div className='flex justify-end mt-3'><${ConfDel} t=${r.fs.length?'Tirar deste mês (as faturas ficam sem local)':'Tirar deste mês'} on=${remover}/></div>
   </div>`}</div>`}
-function FixaMesPage({fxl,setFxl,fixas,setFixas,mats,setMats,cfg,trabs=[],mos=[],obras=[],mes,setMes,back}){
+function FixaMesPage({fxl,setFxl,fixas,setFixas,mats,setMats,cfg,trabs=[],mos=[],obras=[],orcs=[],mes,setMes,back}){
  const [ok,setOk]=useState('');const [pk,setPk]=useState(false);const [nn,setNn]=useState('');const flash=t=>{setOk(t);setTimeout(()=>setOk(''),3500)};
  const R=mesRows(mes,fxl,mats,fixas);const E=eqMesOf(mes,trabs,mos);const hm=hojeISO().slice(0,7);
  const tot=R.reduce((s,r)=>s+r.valor,0)+E.pago+E.falta,pago=R.reduce((s,r)=>s+r.pago,0)+E.pago;
@@ -935,7 +929,7 @@ function FixaMesPage({fxl,setFxl,fixas,setFixas,mats,setMats,cfg,trabs=[],mos=[]
    <div className='flex gap-2 mt-3'><input className='inp' style=${{flex:'1 1 200px'}} placeholder='Novo tópico (ex.: Internet, Contabilista…)' value=${nn} onChange=${e=>setNn(e.target.value)} onKeyDown=${e=>e.key==='Enter'&&novoT()}/><button className='btn' onClick=${novoT}>Criar tópico</button></div></div>`}
   ${ok&&html`<div key=${ok} className='text-sm font-semibold st-msg' style=${{color:cfg.azul}}>${ok}</div>`}
   <div className='grid grid-cols-2 md:grid-cols-4 gap-3'>${[['Total do mês',eur(tot),null,R.length+' tópicos'+(E.pago+E.falta>0?' + equipa':'')],['Pago',eur(pago),cfg.azul,''],['Por pagar',eur(tot-pago),tot-pago>0.005?RED:null,''],['Tópicos pagos',R.filter(r=>r.valor>0.005&&r.pago>=r.valor-0.005).length+' / '+R.length,null,'']].map(a=>html`<div key=${a[0]} className='card cq text-center md:text-left'><div className='text-xs mut'>${a[0]}</div><div className='statv font-extrabold tracking-tight mt-1' style=${{color:a[2]||'var(--fg)'}}>${a[1]}</div>${a[3]&&html`<div className='text-xs mut mt-1'>${a[3]}</div>`}</div>`)}</div>
-  <div className='space-y-2'>${R.map(r=>html`<${FxMesRow} key=${r.k} r=${r} mes=${mes} setFxl=${setFxl} setMats=${setMats} mats=${mats} cfg=${cfg}/>`)}</div>
+  <div className='space-y-2'>${R.map(r=>html`<${FxMesRow} key=${r.k} r=${r} mes=${mes} setFxl=${setFxl} setMats=${setMats} mats=${mats} cfg=${cfg} obras=${obras} orcs=${orcs}/>`)}</div>
   ${!R.length&&html`<div className='card text-center' style=${{padding:'26px 18px'}}><div className='font-bold'>Sem despesas em ${mesLabel(mes)}</div><div className='text-sm mut mt-1 mb-3'>Cria o mês com os teus tópicos ou copia o mês anterior.</div><div className='flex gap-2 justify-center flex-wrap'><button className='btn' onClick=${gerar}>Criar com os tópicos</button><button className='btn2' onClick=${dup}>Copiar mês anterior</button></div></div>`}
   ${(E.sal.length||E.trab.length)>0&&html`<${Card} st=${true}><div className='flex flex-wrap items-baseline justify-between gap-2 mb-2'><h3 className='font-bold'>Equipa em ${mesLabel(mes)}</h3><span className='text-xs mut'>vem sozinho dos Trabalhadores</span></div>
    ${E.sal.map(x=>html`<div key=${x.k} className='flex justify-between gap-3 text-sm py-1.5' style=${{borderTop:'1px solid var(--bd)'}}><span>${x.nome} <span className='mut text-xs'>· pago a ${fdate(x.data)}</span></span><b style=${{color:cfg.azul}}>${eur(x.valor)}</b></div>`)}
