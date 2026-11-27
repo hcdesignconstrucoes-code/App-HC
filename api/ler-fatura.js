@@ -9,7 +9,7 @@ const CATS = ['Alvenaria', 'Elétrico', 'Canalização', 'Acabamentos', 'Outros'
 const PROMPT = `És um assistente de contabilidade de uma empresa de construção em Portugal.
 Lê esta fatura e responde APENAS com um objeto JSON, sem texto à volta, neste formato:
 {
- "fornecedor": "nome da empresa que emitiu a fatura",
+ "fornecedor": "só o nome comercial da empresa que emitiu a fatura, curto e sempre igual (ex.: \"Leroy Merlin\", \"Bricomarché\", \"EDP\"), sem S.A., Lda., Unipessoal, Portugal, nome da loja, localidade, morada ou NIF",
  "nif_fornecedor": "NIF do fornecedor ou null",
  "numero": "número da fatura, ex.: FT 2026/123",
  "data": "AAAA-MM-DD (data de emissão)",
